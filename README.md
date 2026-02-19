@@ -67,3 +67,4 @@ npm run preview
 - Styles globaux: [src/index.css](src/index.css)
 
 Pour vérifier rapidement que Tailwind fonctionne, le layout de démo est dans [src/App.tsx](src/App.tsx).
+# projet_ecommerce
