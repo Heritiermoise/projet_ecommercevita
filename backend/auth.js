@@ -14,7 +14,12 @@ export function signToken(payload) {
 
 export function requireAuth(req, res, next) {
   const header = req.headers.authorization
-  const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null
+  let token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null
+
+  // Support token in query for direct links (e.g. PDF reports)
+  if (!token && req.query.token) {
+    token = req.query.token
+  }
 
   if (!token) {
     return res.status(401).json({ error: 'Non authentifié' })

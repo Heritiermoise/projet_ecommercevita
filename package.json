@@ -21,6 +21,8 @@
     "lucide-react": "^0.563.0",
     "mysql2": "^3.16.2",
     "nodemailer": "^7.0.13",
+    "puppeteer": "^24.5.0",
+    "qrcode": "^1.5.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.0",

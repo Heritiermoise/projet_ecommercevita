@@ -17,6 +17,8 @@ import VisitesPage from './pages/VisitesPage'
 import CategoriesPage from './pages/CategoriesPage'
 import AdminDashboardPage from './pages/AdminDashboardPage'
 import HistoriquePaiementsPage from './pages/HistoriquePaiementsPage'
+import UtilisateursPage from './pages/UtilisateursPage'
+import VentesPage from './pages/VentesPage'
 import { RequireAdmin, RequireAuth, RequireClient } from './auth/Require'
 
 function App() {
@@ -130,6 +132,24 @@ function App() {
           element={
             <RequireAdmin>
               <HistoriquePaiementsPage />
+            </RequireAdmin>
+          }
+        />
+
+        <Route
+          path="/admin/utilisateurs"
+          element={
+            <RequireAdmin>
+              <UtilisateursPage />
+            </RequireAdmin>
+          }
+        />
+
+        <Route
+          path="/admin/ventes"
+          element={
+            <RequireAdmin>
+              <VentesPage />
             </RequireAdmin>
           }
         />

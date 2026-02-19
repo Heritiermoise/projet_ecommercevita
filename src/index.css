@@ -10,4 +10,41 @@ body {
 
 body {
   margin: 0;
+  @apply bg-slate-50 text-slate-900 transition-colors duration-300 antialiased;
+}
+
+/* Dark mode support manuel via classe dark sur <html> */
+.dark body {
+  @apply bg-slate-950 text-slate-100;
+}
+
+/* Fix global pour la visibilité des inputs dans tous les modes */
+input, textarea, select {
+  @apply text-slate-900 bg-white border-slate-300;
+}
+
+.dark input, .dark textarea, .dark select {
+  @apply text-white bg-slate-900 border-slate-700 placeholder:text-slate-400 !important;
+}
+
+/* Forcer la couleur du texte pour les contrastes en mode sombre */
+.dark h1, .dark h2, .dark h3, .dark h4, .dark label, .dark .text-slate-900 {
+  @apply text-white !important;
+}
+
+.dark p, .dark span:not(.bg-rose-100):not(.bg-emerald-100):not(.bg-amber-100), .dark .text-slate-600, .dark .text-slate-700 {
+  @apply text-slate-300 !important;
+}
+
+.dark .bg-white {
+  @apply bg-slate-900 border-slate-800 !important;
+}
+
+.dark .border {
+  @apply border-slate-800 !important;
+}
+
+/* Custom Utilities for glass effects */
+.glass {
+  @apply bg-white/70 backdrop-blur-md border border-white/20 dark:bg-slate-900/70 dark:border-white/10;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { apiGet } from '../lib/api'
+import { apiGet, apiPut } from '../lib/api'
 
 type Notification = {
   id: number
@@ -19,24 +19,32 @@ export default function NotificationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [items, setItems] = useState<Notification[]>([])
 
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        setLoading(true)
-        setError(null)
-        const data = await apiGet<Notification[]>('/api/notifications')
-        if (!cancelled) setItems(data)
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Erreur inconnue')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    })()
-
-    return () => {
-      cancelled = true
+  const fetchNotifications = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const data = await apiGet<Notification[]>('/api/notifications')
+      setItems(data)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur inconnue')
+    } finally {
+      setLoading(false)
     }
+  }
+
+  const markAsRead = async (id: number) => {
+    try {
+      await apiPut(`/api/notifications/${id}/lu`, {})
+      setItems(prev => 
+        prev.map(n => n.id === id ? { ...n, lu: 1 } : n)
+      )
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  useEffect(() => {
+    fetchNotifications()
   }, [])
 
   return (
@@ -69,18 +77,23 @@ export default function NotificationsPage() {
           items.map((n) => (
             <div
               key={n.id}
-              className="rounded-2xl border bg-white p-4 shadow-sm"
+              onClick={() => !n.lu && markAsRead(n.id)}
+              className={`rounded-2xl border p-4 shadow-sm transition-all cursor-pointer ${
+                n.lu ? 'bg-white opacity-75' : 'bg-white border-slate-900 shadow-md ring-1 ring-slate-900'
+              }`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="font-semibold text-slate-900">{n.message}</div>
-                  <div className="mt-1 text-sm text-slate-600">{formatDate(n.creeLe)}</div>
+                  <div className={`font-semibold ${n.lu ? 'text-slate-600' : 'text-slate-900'}`}>
+                    {n.message}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">{formatDate(n.creeLe)}</div>
                 </div>
                 <span
                   className={
                     n.lu
                       ? 'rounded-full border bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600'
-                      : 'rounded-full border border-slate-900 bg-slate-900 px-3 py-1 text-xs font-semibold text-white'
+                      : 'rounded-full border border-rose-600 bg-rose-600 px-3 py-1 text-xs font-semibold text-white'
                   }
                 >
                   {n.lu ? 'Lu' : 'Nouveau'}

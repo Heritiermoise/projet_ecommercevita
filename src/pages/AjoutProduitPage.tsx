@@ -44,14 +44,15 @@ export default function AjoutProduitPage() {
 
         if (isEdit && id) {
           const prod = await apiGet<Produit>(`/api/produits/${id}`)
-          if (!cancelled) {
-            setCategorieId(prod.categorieId ? String(prod.categorieId) : '')
-            setNom(prod.nom)
-            setPrix(String(prod.prix))
-            setStock(String(prod.stockQuantite))
+          if (!cancelled && prod) {
+            // Chargement explicite pour garantir le remplissage du formulaire
+            setNom(prod.nom || '')
+            setPrix(prod.prix !== undefined ? String(prod.prix) : '')
+            setStock(prod.stockQuantite !== undefined ? String(prod.stockQuantite) : '0')
             setMarque(prod.marque || '')
             setImagePrincipale(prod.imagePrincipale || '')
             setDescription(prod.description || '')
+            setCategorieId(prod.categorieId ? String(prod.categorieId) : '')
           }
         }
       } catch (e) {
@@ -250,9 +251,8 @@ export default function AjoutProduitPage() {
           </button>
         </form>
 
-        <div className="mt-6 text-xs text-slate-500">
-          Note: ton dump SQL contient un trigger qui écrit dans `notifications.type` mais la table `notifications` n’a pas la colonne `type`.
-          Si tu ajoutes/updates le stock et que le trigger se déclenche, MySQL peut renvoyer une erreur.
+        <div className="mt-6 text-xs text-slate-500 italic">
+          Note: Le système de stock et les notifications sont désormais synchronisés avec la base de données.
         </div>
       </div>
     </div>

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiGet } from '../lib/api'
-import { ShoppingBag, Users, Package, ArrowRight, CreditCard } from 'lucide-react'
+import { useAuth } from '../auth/AuthContext'
+import { ShoppingBag, Users, Package, ArrowRight, CreditCard, TrendingUp, FileText } from 'lucide-react'
 
 type Client = {
   id: number
@@ -31,16 +32,25 @@ type DashboardData = {
   produitsParCategorie: ProduitsParCategorie[]
   visitesParHeure: VisitesParHeure[]
   activeWindowMinutes: number
+  statsVentes?: {
+    total60Jours: number
+    totalGlobal: number
+  }
+}
+
+function formatAmount(amount: number) {
+  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(amount)
 }
 
 function formatDate(iso: string | null) {
-  if (!iso) return '-'
+  if (!iso) return '—'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
   return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }).format(d)
 }
 
 export default function AdminDashboardPage() {
+  const { token } = useAuth()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -87,11 +97,22 @@ export default function AdminDashboardPage() {
             Vue globale des clients, produits et visites.
           </p>
         </div>
-        {data ? (
-          <div className="text-xs font-semibold text-slate-600">
-            Connectés = activité dans les {data.activeWindowMinutes} dernières minutes
-          </div>
-        ) : null}
+        <div className="flex flex-col items-end gap-2">
+          <a
+            href={`${import.meta.env.VITE_API_URL || ''}/api/admin/rapport-commandes/pdf?token=${token}`}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-slate-200 transition hover:bg-slate-800"
+          >
+            <FileText className="h-4 w-4" />
+            Rapport PDF des Commandes
+          </a>
+          {data ? (
+            <div className="text-xs font-semibold text-slate-600">
+              Connectés = activité dans les {data.activeWindowMinutes} dernières minutes
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {error ? (
@@ -100,6 +121,24 @@ export default function AdminDashboardPage() {
           <div className="mt-1 text-slate-600">{error}</div>
         </div>
       ) : null}
+
+      <div className="mt-8 grid gap-4 lg:grid-cols-2">
+        <div className="rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-500 to-indigo-700 p-8 text-white shadow-xl">
+          <div className="text-sm font-bold uppercase tracking-widest opacity-80">Total Ventes (60 jours)</div>
+          <div className="mt-2 text-4xl font-black">
+            {loading ? '...' : formatAmount(data?.statsVentes?.total60Jours ?? 0)}
+          </div>
+          <p className="mt-4 text-xs opacity-70 italic">* Basé sur les transactions validées uniquement</p>
+        </div>
+
+        <div className="rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-500 to-emerald-700 p-8 text-white shadow-xl">
+          <div className="text-sm font-bold uppercase tracking-widest opacity-80">Total Temps Réel (Global)</div>
+          <div className="mt-2 text-4xl font-black">
+            {loading ? '...' : formatAmount(data?.statsVentes?.totalGlobal ?? 0)}
+          </div>
+          <p className="mt-4 text-xs opacity-70 italic">Cumul historique de toutes les ventes réussies</p>
+        </div>
+      </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Link 
@@ -134,38 +173,74 @@ export default function AdminDashboardPage() {
           </div>
         </Link>
 
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        {/* Gestion des Utilisateurs */}
+        <Link 
+          to="/admin/utilisateurs" 
+          className="group rounded-2xl border border-amber-100 bg-amber-50 p-4 shadow-sm hover:bg-amber-100 transition-all hover:shadow-md"
+        >
+          <div className="flex items-center justify-between">
+            <div className="rounded-lg bg-amber-600 p-2 text-white shadow-lg shadow-amber-200">
+              <Users className="h-5 w-5" />
+            </div>
+            <ArrowRight className="h-4 w-4 text-amber-400 group-hover:translate-x-1 transition-transform" />
+          </div>
+          <div className="mt-4">
+            <div className="text-xs font-bold uppercase tracking-wider text-amber-600">Utilisateurs</div>
+            <div className="text-2xl font-black text-amber-900">Gérer les comptes</div>
+          </div>
+        </Link>
+
+        {/* Journal des Ventes */}
+        <Link 
+          to="/admin/ventes" 
+          className="group rounded-2xl border border-rose-100 bg-rose-50 p-4 shadow-sm hover:bg-rose-100 transition-all hover:shadow-md"
+        >
+          <div className="flex items-center justify-between">
+            <div className="rounded-lg bg-rose-600 p-2 text-white shadow-lg shadow-rose-200">
+              <TrendingUp className="h-5 w-5" />
+            </div>
+            <ArrowRight className="h-4 w-4 text-rose-400 group-hover:translate-x-1 transition-transform" />
+          </div>
+          <div className="mt-4">
+            <div className="text-xs font-bold uppercase tracking-wider text-rose-600">Revenus</div>
+            <div className="text-2xl font-black text-rose-900">Journal des Ventes</div>
+          </div>
+        </Link>
+      </div>
+
+      <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-2xl border bg-white dark:bg-slate-900 dark:border-slate-800 p-4 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-slate-100 p-2 text-slate-600">
+            <div className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2 text-slate-600 dark:text-slate-400">
               <Users className="h-5 w-5" />
             </div>
             <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Clients</div>
           </div>
-          <div className="mt-4 text-2xl font-black text-slate-900">
+          <div className="mt-4 text-2xl font-black text-slate-900 dark:text-slate-100">
             {loading ? '—' : totalClients}
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="rounded-2xl border bg-white dark:bg-slate-900 dark:border-slate-800 p-4 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-emerald-100 p-2 text-emerald-600">
+            <div className="rounded-lg bg-emerald-100 dark:bg-emerald-950/30 p-2 text-emerald-600 dark:text-emerald-400">
               <Users className="h-5 w-5" />
             </div>
             <div className="text-xs font-bold uppercase tracking-wider text-emerald-500">En ligne</div>
           </div>
-          <div className="mt-4 text-2xl font-black text-slate-900">
+          <div className="mt-4 text-2xl font-black text-slate-900 dark:text-slate-100">
             {loading ? '—' : data?.connectedCount ?? 0}
           </div>
         </div>
 
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+        <div className="rounded-2xl border bg-white dark:bg-slate-900 dark:border-slate-800 p-4 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-amber-100 p-2 text-amber-600">
+            <div className="rounded-lg bg-amber-100 dark:bg-amber-950/30 p-2 text-amber-600 dark:text-amber-400">
               <Package className="h-5 w-5" />
             </div>
             <div className="text-xs font-bold uppercase tracking-wider text-amber-500">Stock total</div>
           </div>
-          <div className="mt-4 text-2xl font-black text-slate-900">
+          <div className="mt-4 text-2xl font-black text-slate-900 dark:text-slate-100">
             {loading ? '—' : totalProduits}
           </div>
         </div>

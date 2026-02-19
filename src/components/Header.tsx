@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link, NavLink, useLocation } from "react-router-dom"
 import {
   Bell,
@@ -14,18 +14,23 @@ import {
   ShoppingBag,
   ShoppingCart,
   Star,
+  Sun,
+  Moon,
   Tag,
   TrendingUp,
   User,
   Users,
   X,
+  DollarSign,
 } from "lucide-react"
 import { useAuth } from "../auth/AuthContext"
 import { buildWhatsAppUrl } from "../lib/whatsapp"
+import { apiGet } from "../lib/api"
 
 type NavItem = {
   label: string
   to: string
+  
   icon?: React.ReactNode
 }
 
@@ -40,12 +45,37 @@ export default function Header() {
   const location = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [mobileProductsOpen, setMobileProductsOpen] = useState(false)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    return (localStorage.getItem('theme') as 'light' | 'dark') || 
+           (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+  })
+
+  useEffect(() => {
+    const root = window.document.documentElement
+    if (theme === 'dark') {
+      root.classList.add('dark')
+    } else {
+      root.classList.remove('dark')
+    }
+    localStorage.setItem('theme', theme)
+  }, [theme])
+
+  const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light')
 
   const handleMobileNavClick = () => {
     setMobileOpen(false)
   }
 
-  const [notificationCount] = useState(0)
+  const [notificationCount, setNotificationCount] = useState(0)
+
+  useEffect(() => {
+    if (user) {
+      apiGet<{ unreadCount: number }>('/api/notifications/unread-count')
+        .then(res => setNotificationCount(res.unreadCount))
+        .catch(() => {})
+    }
+  }, [user, location.pathname])
+
   const supportNumber = import.meta.env.VITE_SUPPORT_WHATSAPP_NUMBER as string | undefined
   const whatsappUrl = supportNumber
     ? buildWhatsAppUrl(supportNumber, "Bonjour, j'ai une question concernant la boutique.")
@@ -58,7 +88,9 @@ export default function Header() {
       base.push(
         { label: "Categories", to: "/categories-gestion", icon: <Settings className="h-4 w-4" /> },
         { label: "Historique prix", to: "/historique-prix", icon: <TrendingUp className="h-4 w-4" /> },
-        { label: "Visites", to: "/visites", icon: <Users className="h-4 w-4" /> }
+        { label: "Visites", to: "/visites", icon: <Users className="h-4 w-4" /> },
+        { label: "Utilisateurs", to: "/admin/utilisateurs", icon: <User className="h-4 w-4" /> },
+        { label: "Ventes", to: "/admin/ventes", icon: <DollarSign className="h-4 w-4" /> }
       )
     }
     if (!user) {
@@ -79,9 +111,11 @@ export default function Header() {
       base.push(
         { label: "Ajout produit", to: "/produits/ajout", icon: <PlusCircle className="h-4 w-4" /> },
         { label: "Bannieres", to: "/bannieres", icon: <Tag className="h-4 w-4" /> },
-        { label: "Categories", to: "/categories", icon: <Settings className="h-4 w-4" /> },
+        { label: "Categories", to: "/categories-gestion", icon: <Settings className="h-4 w-4" /> },
         { label: "Historique prix", to: "/historique-prix", icon: <TrendingUp className="h-4 w-4" /> },
-        { label: "Visites", to: "/visites", icon: <Users className="h-4 w-4" /> }
+        { label: "Visites", to: "/visites", icon: <Users className="h-4 w-4" /> },
+        { label: "Utilisateurs", to: "/admin/utilisateurs", icon: <User className="h-4 w-4" /> },
+        { label: "Ventes", to: "/admin/ventes", icon: <DollarSign className="h-4 w-4" /> }
       )
     } else if (user) {
       base.push(
@@ -185,7 +219,7 @@ export default function Header() {
           {user && (
             <button
               onClick={logout}
-              className="hidden h-10 items-center justify-center gap-2 rounded-xl border bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 md:inline-flex"
+              className="hidden h-10 items-center justify-center gap-2 rounded-xl border bg-white dark:bg-slate-800 dark:border-slate-700 px-3 text-sm font-semibold text-rose-600 dark:text-rose-400 shadow-sm transition hover:bg-rose-50 dark:hover:bg-rose-950/30 md:inline-flex"
             >
               <LogOut className="h-4 w-4" />
               Déconnexion
@@ -195,7 +229,7 @@ export default function Header() {
           {user?.role !== "admin" && (
             <Link
               to="/panier"
-              className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white text-slate-700 shadow-sm transition hover:bg-slate-50"
+              className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white dark:bg-slate-800 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-sm transition hover:bg-slate-50 dark:hover:bg-slate-700"
             >
               <ShoppingCart className="h-5 w-5" />
             </Link>
@@ -203,19 +237,27 @@ export default function Header() {
 
           <Link
             to="/notifications"
-            className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white text-slate-700 shadow-sm transition hover:bg-slate-50"
+            className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white dark:bg-slate-800 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-sm transition hover:bg-slate-50 dark:hover:bg-slate-700"
           >
             <Bell className="h-5 w-5" />
             {notificationCount > 0 ? (
-              <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-slate-900 px-1 text-[11px] font-semibold text-white">
+              <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white shadow-sm ring-2 ring-white dark:ring-slate-900 animate-in zoom-in">
                 {notificationCount}
               </span>
             ) : null}
           </Link>
 
           <button
+            onClick={toggleTheme}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white dark:bg-slate-800 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-sm transition hover:bg-slate-50 dark:hover:bg-slate-700"
+            title={theme === 'light' ? 'Passer au mode sombre' : 'Passer au mode clair'}
+          >
+            {theme === 'light' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
+          </button>
+
+          <button
             type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 md:hidden"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border bg-white dark:bg-slate-800 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-sm transition hover:bg-slate-50 dark:hover:bg-slate-700 md:hidden"
             onClick={() => setMobileOpen(true)}
           >
             <Menu className="h-5 w-5" />

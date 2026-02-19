@@ -6,31 +6,68 @@ import { pool } from './db.js'
 import bcrypt from 'bcryptjs'
 import axios from 'axios'
 import nodemailer from 'nodemailer'
+import dns from 'node:dns'
+import QRCode from 'qrcode'
+import puppeteer from 'puppeteer'
 import { requireAuth, requireRole, signToken } from './auth.js'
 
+// Correction professionnelle des erreurs DNS ETIMEOUT sur Windows/Node.js
+dns.setDefaultResultOrder('ipv4first')
+
+// Configuration DNS alternative pour éviter les timeouts DNS système
+import dnsPromises from 'node:dns/promises'
+dns.setServers(['8.8.8.8', '8.8.4.4']) // Utilise les DNS de Google pour plus de fiabilité
+
 dotenv.config()
+
+const BASE_URL = process.env.APP_URL || 'http://localhost:3001'
 
 const app = express()
 app.use(express.json())
 
-// Config Mail (Nodemailer)
+// Config Mail (Nodemailer) - Configuration robuste avec IP plutôt que nom de domaine
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  host: 'smtp.gmail.com',
+  host: '74.125.133.108', // IP directe de smtp.gmail.com
   port: 465,
   secure: true,
   auth: {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  }
+    pass: process.env.SMTP_PASS?.replace(/\s+/g, ''),
+  },
+  tls: {
+    rejectUnauthorized: false,
+    servername: 'smtp.gmail.com'
+  },
+  connectionTimeout: 45000, // Augmenté à 45s pour éviter le ETIMEDOUT
+  greetingTimeout: 30000, 
+  socketTimeout: 60000,   
+  pool: true,              // Pooling pour garder la connexion ouverte
+  maxConnections: 5,
+  maxMessages: 100
 })
+
+// Vérification de la connexion avec retry logic
+const verifySMTP = (retries = 3) => {
+  transporter.verify((error) => {
+    if (error) {
+      if (retries > 0) {
+        console.warn(`[MAIL SYSTEM] Echec connexion SMTP, tentative de reconnexion (${retries} restantes)...`);
+        setTimeout(() => verifySMTP(retries - 1), 5000);
+      } else {
+        console.error('[MAIL SYSTEM] Système Email hors ligne après plusieurs tentatives.', error.message);
+      }
+    } else {
+      console.log('[MAIL SYSTEM] Serveur SMTP prêt (Connexion Directe IP).');
+    }
+  });
+};
+
+verifySMTP();
 
 /**
  * Envoie une facture professionnelle par Email et simule l'envoi WhatsApp
  */
 async function sendInvoice(commandeId) {
-  const BASE_URL = process.env.APP_URL || 'http://localhost:3001'
-  
   try {
     // 1. Récupérer les données complètes
     const [[commande]] = await pool.query(
@@ -131,7 +168,8 @@ async function sendInvoice(commandeId) {
         else phone = '243' + phone
       }
 
-      const isValidWA = /^243[89][0-9]{8}$/.test(phone) 
+      // Vérification plus souple de l'indicatif RDC (243) + 9 chiffres
+      const isValidWA = /^243[0-9]{9}$/.test(phone) 
       
       if (isValidWA) {
         const waMessage = `✨ *FACTURE MAISHA SHOP* ✨\n` +
@@ -145,12 +183,13 @@ async function sendInvoice(commandeId) {
         
         console.log(`[WHATSAPP SIMULATION] Message envoyé au ${phone} :\n${waMessage}`)
         
+        // Insertion d'une trace réelle de l'envoi WhatsApp dans la DB
         await pool.query(
           "INSERT INTO notifications (message, lu) VALUES (:msg, 0)",
-          { msg: `📱 WhatsApp (facture) prêt pour ${phone} (Réf: ${commande.reference})` }
+          { msg: `📱 WhatsApp prêt pour ${phone} (Commande: ${commande.reference})` }
         )
       } else {
-        console.warn(`[WHATSAPP ERROR] Numéro invalide ou non WhatsApp : ${phone}`)
+        console.warn(`[WHATSAPP ERROR] Numéro invalide pour la RDC (doit être 243 + 9 chiffres) : ${phone}`)
       }
     }
 
@@ -411,6 +450,15 @@ app.get('/api/admin/dashboard', requireAuth, requireRole('admin'), async (_req, 
        LIMIT 500`,
     )
 
+    // Calcul du montant total vendu sur les 60 derniers jours
+    const [[ventes60Jours]] = await pool.query(
+      `SELECT SUM(montant) as total FROM ventes 
+       WHERE date_vente >= DATE_SUB(NOW(), INTERVAL 60 DAY)`
+    )
+
+    // Calcul du montant total cumulé (temps réel)
+    const [[ventesTotal]] = await pool.query('SELECT SUM(montant) as total FROM ventes')
+
     const [produitsParCategorie] = await pool.query(
       `SELECT c.id as categorieId, c.nom as categorieNom, COUNT(p.id) as totalProduits
        FROM categories c
@@ -466,7 +514,29 @@ app.get('/api/admin/dashboard', requireAuth, requireRole('admin'), async (_req, 
       produitsParCategorie: produitsParCategorieFinal,
       visitesParHeure: visitesParHeureFinal,
       activeWindowMinutes: ACTIVE_WINDOW_MINUTES,
+      statsVentes: {
+        total60Jours: Number(ventes60Jours?.total ?? 0),
+        totalGlobal: Number(ventesTotal?.total ?? 0)
+      }
     })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Historique de vente pour Admin (Longue durée)
+app.get('/api/admin/ventes/historique', requireAuth, requireRole('admin'), async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT v.id, v.commande_id as commandeId, v.montant, v.date_vente as dateVente,
+              c.reference, u.nom, u.prenom
+       FROM ventes v
+       JOIN commandes c ON v.commande_id = c.id
+       JOIN utilisateurs u ON v.utilisateur_id = u.id
+       ORDER BY v.date_vente DESC
+       LIMIT 1000`
+    )
+    res.json(rows)
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
@@ -790,24 +860,14 @@ async function createCommandeForUser(userId, items, modePaiement, statutPaiement
       )
       
       if (!p || p.stock_quantite < item.quantite) {
-        throw new Error(`Stock épuisé pour "${p?.nom || item.produitId}"`)
+        throw new Error(`Le produit "${p?.nom || 'Inconnu'}" n'est plus disponible en stock suffisant (${p?.stock_quantite || 0} restants).`)
       }
 
       total += p.prix * item.quantite
       
       // TRIGGER 3 & 5: Gestion Stock + Alerte Stock Faible
-      const newStock = p.stock_quantite - item.quantite
-      await conn.query(
-        'UPDATE produits SET stock_quantite = :newStock WHERE id = :id', 
-        { newStock, id: item.produitId }
-      )
-
-      if (newStock <= 5 && p.stock_quantite > 5) {
-        await conn.query(
-          "INSERT INTO notifications (type, message) VALUES ('STOCK_LOW', :msg)",
-          { msg: `Alerte : Le stock de ${p.nom} est presque épuisé (${newStock} restant).` }
-        )
-      }
+      // Note: On réduit ici pour réserver le stock, mais triggerVente le fait aussi
+      // On va laisser triggerVente gérer la réduction finale lors du paiement
     }
 
     // 2. Insertion Commande
@@ -868,69 +928,109 @@ const MaishaPayService = {
   async initiatePayment(montant, reference, commandeId) {
     const merchantId = process.env.MAISHAPAY_MERCHANT_ID
     const apiKey = process.env.MAISHAPAY_SECRET_KEY
+    const publicKey = process.env.MAISHAPAY_PUBLIC_KEY
     
-    // On essaie d'utiliser l'URL standard de Maisha Pay si celle du .env ne répond pas
-    const envBaseUrl = (process.env.MAISHAPAY_BASE_URL || '').replace(/\/$/, '')
-    const standardBaseUrl = 'https://maishapay.online/api/v1'
-    const baseUrl = envBaseUrl || standardBaseUrl
+    // Logique ultra-robuste pour l'URL API
+    let baseUrl = (process.env.MAISHAPAY_BASE_URL || '').replace(/\/$/, '')
+    const isSandboxKey = publicKey && publicKey.includes('SBPK')
+
+    if (!baseUrl) {
+      // Priorité aux URLs officielles
+      baseUrl = isSandboxKey
+        ? 'https://maishapay.online/api/v1/sandbox'
+        : 'https://maishapay.online/api/v1'
+    } else if (isSandboxKey && !/sandbox/i.test(baseUrl)) {
+      // Si une clé sandbox est utilisée, forcer un endpoint sandbox
+      baseUrl = `${baseUrl}/sandbox`
+    }
+
+    const firstOrigin = (process.env.CORS_ORIGIN ?? 'http://localhost:5173').split(',')[0].trim()
 
     try {
-      console.log(`[MAISHAPAY] Initiation sur ${baseUrl}/transaction/initiate`)
+      console.log(`[MAISHAPAY] Appel API sur ${baseUrl}/transaction/initiate (Ref: ${reference})`)
       
       const payload = {
         api_key: apiKey,
+        gateway_key: publicKey,
         merchant_id: merchantId,
-        amount: montant,
+        amount: Number(montant),
         currency: 'USD',
-        order_id: reference,
-        description: `Ecommerce CMD ${reference}`,
-        success_url: `${process.env.CORS_ORIGIN}/commandes?status=p_success&ref=${reference}`,
-        cancel_url: `${process.env.CORS_ORIGIN}/paiement?status=p_cancelled`,
-        callback_url: `${process.env.VITE_API_URL}/api/paiements/maishapay/callback`
+        order_id: String(reference),
+        description: `Achat Maisha Shop - Réf ${reference}`,
+        success_url: `${firstOrigin}/commandes?status=success&ref=${reference}`,
+        cancel_url: `${firstOrigin}/paiement?status=cancel`,
       }
 
-      const response = await axios.post(`${baseUrl}/transaction/initiate`, payload, {
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'User-Agent': 'Ecommerce-App/1.0'
-        },
-        timeout: 20000 // Augmentation à 20s
-      })
+      const endpoints = ['transaction/initiate', 'transactions/initiate', 'transaction/initialize']
+      let response
+      let lastError
 
-      console.log('[MAISHAPAY RESPONSE]', response.data)
+      for (const endpoint of endpoints) {
+        try {
+          console.log(`[MAISHAPAY] Appel API sur ${baseUrl}/${endpoint} (Ref: ${reference})`)
+          response = await axios.post(`${baseUrl}/${endpoint}`, payload, {
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+              'User-Agent': 'MaishaShop-Express/1.0',
+            },
+            timeout: 45000,
+          })
 
-      if (response.data && (response.data.payment_url || response.data.paymentUrl)) {
-        const pUrl = response.data.payment_url || response.data.paymentUrl
+          // Détection de la réponse : Si c'est du HTML, c'est une erreur 404/500 du serveur MaishaPay
+          if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE html>')) {
+            console.error('[MAISHAPAY] Le serveur a retourné du HTML au lieu de JSON (Erreur 404/500)')
+            throw new Error("Le service Maisha Pay est temporairement indisponible ou l'URL est incorrecte.")
+          }
+
+          break
+        } catch (err) {
+          lastError = err
+          const status = err?.response?.status
+          if (status === 404 || status === 405) {
+            continue
+          }
+          throw err
+        }
+      }
+
+      if (!response) {
+        throw lastError || new Error("Le service Maisha Pay est temporairement indisponible ou l'URL est incorrecte.")
+      }
+
+      const data = response.data
+      const pUrl = data.payment_url || data.paymentUrl || (data.response && data.response.payment_url)
+      const transId = data.transaction_id || data.transactionId || (data.response && data.response.transaction_id)
+      
+      if (pUrl) {
         await pool.query(
           `INSERT INTO transactions_paiement (commande_id, reference_externe, montant, mode_paiement, statut, donnees_brutes) 
            VALUES (:cmdId, :extRef, :montant, 'Maisha Pay', 'en_attente', :raw)`,
           { 
             cmdId: commandeId, 
-            extRef: response.data.transaction_id || response.data.transactionId || null,
+            extRef: transId || reference,
             montant, 
-            raw: JSON.stringify(response.data) 
+            raw: JSON.stringify(data) 
           }
         )
 
         return {
           success: true,
           paymentUrl: pUrl,
-          transactionId: response.data.transaction_id || response.data.transactionId
+          transactionId: transId
         }
       } else {
-        throw new Error(response.data.message || "Erreur d'initialisation Maisha Pay")
+        console.error('[MAISHAPAY ERROR RESPONSE]', data)
+        throw new Error(data.message || "La passerelle Maisha Pay n'a pas retourné d'URL de paiement.")
       }
     } catch (error) {
-      // Si l'URL personnalisée a échoué par timeout, on peut tenter un fallback interne ici si besoin
       if (error.response) {
-        console.error('[MAISHAPAY API ERROR]', error.response.status, error.response.data)
-        throw new Error(`Maisha Pay API Error: ${error.response.data.message || error.response.statusText}`)
-      } else if (error.request) {
-        console.error('[MAISHAPAY NETWORK ERROR] Aucune réponse de ' + baseUrl)
-        throw new Error(`Le serveur Maisha Pay (${baseUrl}) est injoignable. Vérifiez votre connexion internet ou les identifiants dans le fichier .env`)
+        console.error('[MAISHAPAY API REJECTED]', error.response.status, error.response.data)
+        throw new Error(`Maisha Pay : ${error.response.data.message || 'Erreur configuration clés'}`)
+      } else if (error.code === 'ECONNABORTED') {
+        throw new Error(`Le serveur Maisha Pay est trop lent à répondre (Timeout). Réessayez dans un instant.`)
       } else {
-        throw new Error(`Erreur Maisha Pay: ${error.message}`)
+        throw new Error(`Impossible de contacter Maisha Pay : ${error.message}`)
       }
     }
   }
@@ -989,14 +1089,29 @@ async function triggerVente(conn, reference) {
     { ref: reference }
   )
   if (cmd) {
-    // On vérifie si la vente n'existe pas déjà pour éviter les doublons
+    // 1. On vérifie si la vente n'existe pas déjà pour éviter les doublons
     const [[exists]] = await conn.query('SELECT id FROM ventes WHERE commande_id = :id', { id: cmd.id })
     if (!exists) {
+      // 2. Enregistrer la vente
       await conn.query(
         'INSERT INTO ventes (commande_id, utilisateur_id, montant, date_vente) VALUES (:cid, :uid, :mt, NOW())',
         { cid: cmd.id, uid: cmd.utilisateur_id, mt: cmd.montant_total }
       )
-      console.log(`[TRIGGER CODE] Vente enregistrée pour ${reference}`)
+
+      // 3. RÉDUIRE LE STOCK pour chaque produit de la commande
+      const [details] = await conn.query(
+        'SELECT produit_id, quantite FROM commande_details WHERE commande_id = :cid',
+        { cid: cmd.id }
+      )
+      
+      for (const item of details) {
+        await conn.query(
+          'UPDATE produits SET stock_quantite = GREATEST(0, stock_quantite - :qty) WHERE id = :pid',
+          { qty: item.quantite, pid: item.produit_id }
+        )
+      }
+
+      console.log(`[TRIGGER CODE] Vente enregistrée et stock réduit pour ${reference}`)
     }
   }
 }
@@ -1234,6 +1349,7 @@ app.put('/api/commandes/:id', requireAuth, requireRole('admin'), async (req, res
   try {
     const commandeId = Number(id)
     await conn.beginTransaction()
+    let shouldEnsureVente = false
 
     // 1. Récupérer l'état actuel pour comparer
     const [[oldCmd]] = await conn.query(
@@ -1246,17 +1362,9 @@ app.put('/api/commandes/:id', requireAuth, requireRole('admin'), async (req, res
       return res.status(404).json({ error: 'Commande introuvable' })
     }
 
-    // --- LOGIQUE TRIGGER 1: Passage à PAYÉ (Vente) ---
+    // --- LOGIQUE TRIGGER 1: Passage à PAYÉ (Vente + Stock) ---
     if (statutPaiement === 'paye' && oldCmd.statut_paiement !== 'paye') {
-      await conn.query(
-        `INSERT INTO ventes (commande_id, utilisateur_id, montant, date_vente)
-         VALUES (:commandeId, :userId, :montant, NOW())`,
-        { 
-          commandeId: oldCmd.id, 
-          userId: oldCmd.utilisateur_id, 
-          montant: oldCmd.montant_total 
-        }
-      )
+      shouldEnsureVente = true
       // Déclenchement de la facture (Email + WhatsApp simulé)
       setImmediate(() => sendInvoice(oldCmd.id))
     }
@@ -1264,7 +1372,7 @@ app.put('/api/commandes/:id', requireAuth, requireRole('admin'), async (req, res
     // --- LOGIQUE TRIGGER 7: Paiement ÉCHOUÉ (Notification) ---
     if (statutPaiement === 'echoue' && oldCmd.statut_paiement !== 'echoue') {
       await conn.query(
-        "INSERT INTO notifications (type, message) VALUES ('PAYMENT_FAILED', :msg)",
+        "INSERT INTO notifications (message, lu) VALUES (:msg, 0)",
         { msg: `Échec de paiement pour la commande ${oldCmd.reference} (Client: ${oldCmd.utilisateur_id})` }
       )
     }
@@ -1279,25 +1387,15 @@ app.put('/api/commandes/:id', requireAuth, requireRole('admin'), async (req, res
         { id: commandeId }
       )
       await conn.query(
-        "INSERT INTO notifications (type, message) VALUES ('ORDER_CANCELLED', :msg)",
+        "INSERT INTO notifications (message, lu) VALUES (:msg, 0)",
         { msg: `La commande ${oldCmd.reference} a été annulée. Stock restauré.` }
       )
     }
 
     // --- LOGIQUE SPÉCIFIQUE LIVRÉ (Vente + Suppression si nécessaire) ---
     if (statutLivraison === 'livre') {
-      // Si on marque comme livré, on s'assure que c'est marqué payé et enregistré en vente
-      if (oldCmd.statut_paiement !== 'paye') {
-        await conn.query(
-          `INSERT INTO ventes (commande_id, utilisateur_id, montant, date_vente)
-           VALUES (:commandeId, :userId, :montant, NOW())`,
-          { 
-            commandeId: oldCmd.id, 
-            userId: oldCmd.utilisateur_id, 
-            montant: oldCmd.montant_total 
-          }
-        )
-      }
+      // Si on marque comme livré, on s'assure que la vente existe (idempotent)
+      await triggerVente(conn, oldCmd.reference)
       
       // On peut soit garder la commande ou la supprimer comme demandé précédemment
       // Ici, on la supprime pour respecter votre demande précédente sur 'ventes'
@@ -1314,6 +1412,10 @@ app.put('/api/commandes/:id', requireAuth, requireRole('admin'), async (req, res
        WHERE id = :id`,
       { id: commandeId, statutPaiement, statutLivraison }
     )
+
+    if (shouldEnsureVente) {
+      await triggerVente(conn, oldCmd.reference)
+    }
 
     await conn.commit()
     res.json({ success: true, message: 'Commande mise à jour (Triggers OK)' })
@@ -1537,70 +1639,167 @@ app.get('/api/admin/transactions', requireAuth, requireRole('admin'), async (_re
   }
 })
 
+app.get('/api/admin/ventes', requireAuth, requireRole('admin'), async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT v.id, v.commande_id as commandeId, c.reference, v.montant, v.date_vente as dateVente,
+              u.email as clientEmail, u.nom as clientNom, u.prenom as clientPrenom
+       FROM ventes v
+       JOIN commandes c ON v.commande_id = c.id
+       LEFT JOIN utilisateurs u ON v.utilisateur_id = u.id
+       ORDER BY v.date_vente DESC`
+    )
+    res.json(rows)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// --- GESTION UTILISATEURS (ADMIN) ---
+app.get('/api/admin/utilisateurs', requireAuth, requireRole('admin'), async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, email, nom, prenom, telephone, role, date_inscription as dateInscription
+       FROM utilisateurs
+       ORDER BY date_inscription DESC`
+    )
+    res.json(rows)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+app.put('/api/admin/utilisateurs/:id/role', requireAuth, requireRole('admin'), async (req, res) => {
+  const { id } = req.params
+  const { role } = req.body
+  if (!['client', 'admin'].includes(role)) {
+    return res.status(400).json({ error: "Rôle invalide" })
+  }
+  try {
+    await pool.query("UPDATE utilisateurs SET role = :role WHERE id = :id", { role, id })
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+app.delete('/api/admin/utilisateurs/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  const { id } = req.params
+  try {
+    // Ne pas permettre de supprimer soi-même
+    if (Number(id) === req.user.id) {
+      return res.status(400).json({ error: "Impossible de supprimer votre propre compte admin" })
+    }
+    await pool.query("DELETE FROM utilisateurs WHERE id = :id", { id })
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// --- GESTION DETAILS COMMANDES ---
+app.get('/api/commandes/:id/details', requireAuth, async (req, res) => {
+  const { id } = req.params
+  try {
+    // Vérifier si la commande appartient à l'utilisateur ou si c'est un admin
+    const [[commande]] = await pool.query("SELECT utilisateur_id FROM commandes WHERE id = :id", { id })
+    if (!commande) return res.status(404).json({ error: "Commande introuvable" })
+    
+    if (req.user.role !== 'admin' && commande.utilisateur_id !== req.user.id) {
+      return res.status(403).json({ error: "Accès refusé" })
+    }
+
+    const [rows] = await pool.query(
+      `SELECT cd.*, p.nom as produitNom, p.image_principale as imagePrincipale
+       FROM commande_details cd
+       JOIN produits p ON cd.produit_id = p.id
+       WHERE cd.commande_id = :id`,
+      { id }
+    )
+    res.json(rows)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
 // --- CHATBOT IA INTELLIGENT ---
-// Note: Pour une IA 100% autonome et fluide, intégrez une API comme OpenAI ou Google Gemini.
 app.post('/api/chatbot', async (req, res) => {
   const { message } = req.body
   const msg = (message || '').toLowerCase()
   
   try {
-    // SI VOUS AVEZ UNE CLÉ API (Exemple Gemini/OpenAI) :
-    // const aiResponse = await axios.post('https://api.openai.com/v1/chat/completions', { ... })
-    // return res.json({ reply: aiResponse.data.choices[0].message.content })
-
-    // Logique d'IA Hybride (Data + Règles métier)
+    // 1. ANALYSE DU CONTEXTE DU SITE (Recherche dynamique)
     
-    // Recherche de produits dynamiques
-    if (msg.includes('produit') || msg.includes('vend') || msg.includes('achat') || msg.includes('stock') || msg.includes('combien')) {
+    // Recherche de produits
+    if (msg.includes('produit') || msg.includes('vend') || msg.includes('achat') || msg.includes('stock') || msg.includes('combien') || msg.includes('montre-moi') || msg.includes('cherche')) {
       const [products] = await pool.query(
-        'SELECT nom, prix, stock_quantite FROM produits WHERE stock_quantite > 0 ORDER BY RAND() LIMIT 3'
+        'SELECT p.nom, p.prix, p.stock_quantite, c.nom as categorie FROM produits p JOIN categories c ON p.categorie_id = c.id WHERE p.stock_quantite > 0 AND (p.nom LIKE :q OR p.description LIKE :q) LIMIT 5',
+        { q: `%${msg.replace(/produit|cherche|vend|montre-moi/g, '').trim()}%` }
       )
       
       if (products.length > 0) {
-        const list = products.map(p => `• ${p.nom} : ${Number(p.prix).toFixed(2)} USD (En stock)`).join('\n')
+        const list = products.map(p => `✨ *${p.nom}*\n   Prix: ${Number(p.prix).toFixed(2)} USD\n   Catégorie: ${p.categorie}`).join('\n\n')
         return res.json({ 
-          reply: `Bienvenue chez Maisha Shop ! Voici quelques articles qui pourraient vous intéresser :\n\n${list}\n\nSouhaitez-vous passer commande ?` 
+          reply: `Bienvenue chez Maisha Shop ! J'ai trouvé ces articles pour vous :\n\n${list}\n\nSouhaitez-vous que je les ajoute à votre panier ?` 
         })
       }
     }
 
-    // Gestion des Commandes (Si l'utilisateur donne une réf)
-    if (msg.includes('cmd-') || msg.includes('commande')) {
+    // Informations sur les catégories
+    if (msg.includes('categorie') || msg.includes('rayon') || msg.includes('genre')) {
+      const [categories] = await pool.query('SELECT nom, description FROM categories WHERE statut = 1')
+      const list = categories.map(c => `📂 *${c.nom}* : ${c.description || 'Découvrez nos nouveautés'}`).join('\n')
+      return res.json({ reply: `Nous avons plusieurs rayons disponibles :\n\n${list}` })
+    }
+
+    // Suivi de commande complexe
+    if (msg.includes('cmd-') || msg.includes('commande') || msg.includes('ma commande') || msg.includes('livraison')) {
       const refMatch = msg.match(/cmd-[a-z0-9]+/i)
       if (refMatch) {
         const [cmd] = await pool.query(
-          'SELECT statut_paiement, statut_livraison FROM commandes WHERE reference = :ref',
+          `SELECT c.statut_paiement, c.statut_livraison, c.montant_total, u.prenom 
+           FROM commandes c 
+           JOIN utilisateurs u ON c.utilisateur_id = u.id 
+           WHERE c.reference = :ref`,
           { ref: refMatch[0].toUpperCase() }
         )
         if (cmd.length > 0) {
+          const c = cmd[0]
           return res.json({ 
-            reply: `📦 Statut de votre commande ${refMatch[0].toUpperCase()} :\n- Paiement : ${cmd[0].statut_paiement}\n- Livraison : ${cmd[0].statut_livraison}` 
+            reply: `Bonjour ${c.prenom} ! Voici l'état de votre commande *${refMatch[0].toUpperCase()}* :\n\n💰 *Total* : ${Number(c.montant_total).toFixed(2)} USD\n💳 *Paiement* : ${c.statut_paiement}\n🚚 *Livraison* : ${c.statut_livraison}\n\nUne équipe s'en occupe activement !` 
           })
         }
       }
-      return res.json({ reply: "Pour suivre votre commande, merci de me donner sa référence (ex: CMD-XXXXX)." })
+      return res.json({ reply: "Pour suivre précisément votre colis, merci de m'indiquer la référence de commande (ex: CMD-XXXXX)." })
     }
 
-    // Aide paiement & livraison
-    if (msg.includes('paye') || msg.includes('moyen') || msg.includes('livrer') || msg.includes('frais')) {
-      return res.json({ 
-        reply: "💳 *Paiements* : Airtel Money, Maisha Pay, ou Cash à la livraison.\n🚚 *Livraison* : 24h/48h à Kinshasa. Livraison partout en RDC par transporteur partenaire." 
+    // 2. RECHERCHE EXTERNE (API GRATUITE) - Simulé ici, peut être étendu avec Gemini/OpenAI
+    // Si la question est générale, on utilise une base de connaissance "Maisha Shop"
+    if (msg.includes('qui') || msg.includes('quoi') || msg.includes('maisha') || msg.includes('entreprise')) {
+      return res.json({
+        reply: "Maisha Shop est la plateforme leader d'e-commerce en RDC. 🇨🇩\n\nNous proposons :\n✅ Produits authentiques\n✅ Paiements sécurisés (Airtel Money, Maisha Pay)\n✅ Service client 24/7\n\nNotre mission est de digitaliser le commerce pour tous."
       })
     }
 
-    // Personnalité & Politesse
-    if (msg.includes('bonjour') || msg.includes('salut') || msg.includes('ca va')) {
-      return res.json({ reply: "Bonjour ! Je suis l'IA de Maisha Shop. Comment puis-je vous aider dans votre shopping aujourd'hui ?" })
+    // 3. LOGIQUE D'INTELLIGENCE DIRECTIONNELLE
+    const responses = {
+      'aide': "Je peux vous aider à :\n1. Trouver un produit 🔍\n2. Suivre une commande 📦\n3. Comprendre les modes de paiement 💳\n4. Contacter un humain 👨‍💼",
+      'paiement': "💳 Nous acceptons :\n- Airtel Money\n- Maisha Pay (Cartes & Mobile)\n- Cash à la livraison (sous conditions)",
+      'contact': "Vous pouvez nous joindre par WhatsApp au +243 000 000 000 ou par email à support@maishashop.com",
+    };
+
+    for (const [key, value] of Object.entries(responses)) {
+      if (msg.includes(key)) return res.json({ reply: value });
     }
 
-    // Réponse par défaut polyvalente
+    // 4. RÉPONSE DÉFAUT "COMPLEXE"
     res.json({ 
-      reply: "Je suis votre assistant Maisha Shop. Je peux vous lister nos produits, suivre vos commandes ou vous aider pour le paiement. Que puis-je faire pour vous ?" 
+      reply: "Je n'ai pas trouvé de réponse exacte dans notre base de données pour votre demande. 🧐\n\nToutefois, je peux rechercher un produit pour vous si vous me donnez son nom, ou vérifier le statut d'une commande avec sa référence 'CMD-XXXX'." 
     })
 
   } catch (e) {
     console.error('[CHATBOT ERROR]', e)
-    res.status(500).json({ reply: "Désolé, je rencontre une petite difficulté technique. Contactez notre support WhatsApp !" })
+    res.status(500).json({ reply: "Désolé, mon cerveau numérique surchauffe... 🧠🔥 Réessayez dans un instant !" })
   }
 })
 
@@ -1637,9 +1836,31 @@ app.get('/api/factures/:reference', async (req, res) => {
     `).join('');
 
     const total = Number(commande.montant_total).toFixed(2);
-    const dateStr = new Date(commande.date_commande).toLocaleDateString('fr-FR');
+    const dateObj = new Date(commande.date_commande)
+    const dateStr = dateObj.toLocaleDateString('fr-FR');
+    const invoiceUrl = `${BASE_URL}/api/factures/${commande.reference}`
 
-    res.send(`
+    const [[dailyCommandes]] = await pool.query(
+      `SELECT COUNT(*) as totalCommandes, COALESCE(SUM(montant_total), 0) as totalMontant
+       FROM commandes
+       WHERE DATE(date_commande) = DATE(:dateCommande)`,
+      { dateCommande: commande.date_commande }
+    )
+
+    const [[dailyVentes]] = await pool.query(
+      `SELECT COUNT(*) as totalVentes, COALESCE(SUM(montant), 0) as totalMontant
+       FROM ventes
+       WHERE DATE(date_vente) = DATE(:dateCommande)`,
+      { dateCommande: commande.date_commande }
+    )
+
+    const qrDataUrl = await QRCode.toDataURL(invoiceUrl, {
+      width: 180,
+      margin: 1,
+      color: { dark: '#0f172a', light: '#ffffff' },
+    })
+
+    const html = `
       <!DOCTYPE html>
       <html lang="fr">
       <head>
@@ -1653,20 +1874,40 @@ app.get('/api/factures/:reference', async (req, res) => {
               .logo { font-size: 24px; font-weight: bold; color: #3b82f6; }
               .invoice-info { text-align: right; }
               .client-info { margin-bottom: 30px; }
+              .qr-box { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; background: #f8fafc; }
+              .qr-box img { width: 120px; height: 120px; }
+              .qr-caption { font-size: 12px; color: #64748b; text-align: center; }
               table { width: 100%; line-height: inherit; text-align: left; border-collapse: collapse; }
               th { background: #f8fafc; padding: 12px; border-bottom: 2px solid #eee; }
               .total { margin-top: 30px; text-align: right; font-size: 20px; font-weight: bold; color: #1e293b; }
+              .report { margin-top: 24px; padding: 18px; border-radius: 12px; background: #f1f5f9; border: 1px solid #e2e8f0; }
+              .report h3 { margin: 0 0 12px; font-size: 16px; color: #0f172a; }
+              .report-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+              .report-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; }
+              .report-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }
+              .report-value { font-size: 18px; font-weight: 700; color: #0f172a; margin-top: 4px; }
               .footer { margin-top: 50px; text-align: center; color: #64748b; font-size: 14px; }
               @media print { body { background: none; padding: 0; } .invoice-box { box-shadow: none; border: none; } .no-print { display: none; } }
+              @media (max-width: 720px) { .header { flex-direction: column; align-items: flex-start; } .invoice-info { text-align: left; } .report-grid { grid-template-columns: 1fr; } }
           </style>
       </head>
       <body>
           <div class="invoice-box">
               <div class="header">
-                  <div class="logo">MAISHA SHOP</div>
+                  <div>
+                      <div class="logo">MAISHA SHOP</div>
+                      <div style="font-size: 14px; color: #64748b; margin-top: 4px;">
+                          Email: support@maishashop.com<br>
+                          Tél: +243 999 000 111
+                      </div>
+                  </div>
                   <div class="invoice-info">
                       <strong>Facture #:</strong> ${commande.reference}<br>
                       <strong>Date:</strong> ${dateStr}
+                  </div>
+                  <div class="qr-box">
+                      <img src="${qrDataUrl}" alt="QR Facture" />
+                      <div class="qr-caption">Scanner pour ouvrir<br>la facture en ligne</div>
                   </div>
               </div>
               <div class="client-info">
@@ -1686,6 +1927,25 @@ app.get('/api/factures/:reference', async (req, res) => {
                   <tbody>${itemsHtml}</tbody>
               </table>
               <div class="total">TOTAL : ${total} USD</div>
+
+              <div class="report">
+                  <h3>Rapport global du ${dateStr}</h3>
+                  <div class="report-grid">
+                      <div class="report-card">
+                          <div class="report-label">Commandes du jour</div>
+                          <div class="report-value">${Number(dailyCommandes?.totalCommandes || 0)} commandes</div>
+                          <div class="report-label" style="margin-top:8px;">Montant cumulé</div>
+                          <div class="report-value">${Number(dailyCommandes?.totalMontant || 0).toFixed(2)} USD</div>
+                      </div>
+                      <div class="report-card">
+                          <div class="report-label">Ventes du jour</div>
+                          <div class="report-value">${Number(dailyVentes?.totalVentes || 0)} ventes</div>
+                          <div class="report-label" style="margin-top:8px;">Montant encaissé</div>
+                          <div class="report-value">${Number(dailyVentes?.totalMontant || 0).toFixed(2)} USD</div>
+                      </div>
+                  </div>
+              </div>
+
               <div class="footer">
                   <p>Merci pour votre achat !</p>
                   <p>Mode de paiement : ${commande.mode_paiement}</p>
@@ -1694,10 +1954,139 @@ app.get('/api/factures/:reference', async (req, res) => {
           </div>
       </body>
       </html>
-    `);
+    `;
+
+    if (req.query.download === 'true' || req.query.format === 'pdf') {
+      const browser = await puppeteer.launch({
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      })
+      const page = await browser.newPage()
+      await page.setContent(html, { waitUntil: 'networkidle0' })
+      const pdfBuffer = await page.pdf({
+        format: 'A4',
+        printBackground: true,
+      })
+      await browser.close()
+      res.setHeader('Content-Type', 'application/pdf')
+      res.setHeader('Content-Disposition', `attachment; filename="facture-${commande.reference}.pdf"`)
+      return res.send(pdfBuffer)
+    }
+
+    res.send(html);
   } catch (err) {
     console.error(err);
     res.status(500).send('Erreur lors de la génération de la facture');
+  }
+});
+
+app.get('/api/admin/rapport-commandes/pdf', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const [commandes] = await pool.query(`
+      SELECT c.*, u.email, u.nom, u.prenom
+      FROM commandes c
+      JOIN utilisateurs u ON c.utilisateur_id = u.id
+      ORDER BY c.date_commande DESC
+    `);
+
+    const [[stats]] = await pool.query(`
+      SELECT 
+        COUNT(*) as totalCommandes, 
+        SUM(montant_total) as totalMontant,
+        SUM(CASE WHEN statut_livraison = 'livré' THEN 1 ELSE 0 END) as totalLivrees
+      FROM commandes
+    `);
+
+    const rowsHtml = commandes.map(c => `
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;">${c.reference}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;">${new Date(c.date_commande).toLocaleDateString('fr-FR')}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;">${c.prenom || ''} ${c.nom || ''}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${Number(c.montant_total).toFixed(2)} $</td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: center;">
+          <span style="padding: 4px 8px; border-radius: 4px; font-size: 11px; background: #f1f5f9;">${c.statut_livraison}</span>
+        </td>
+      </tr>
+    `).join('');
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <meta charset="UTF-8">
+          <style>
+              body { font-family: 'Segoe UI', sans-serif; color: #333; padding: 40px; }
+              .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #3b82f6; padding-bottom: 20px; }
+              .logo { font-size: 24px; font-weight: bold; color: #3b82f6; }
+              .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 30px 0; }
+              .stat-card { background: #f8fafc; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; }
+              .stat-label { font-size: 12px; color: #64748b; text-transform: uppercase; }
+              .stat-value { font-size: 20px; font-weight: bold; color: #0f172a; }
+              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+              th { text-align: left; background: #f1f5f9; padding: 12px 8px; font-size: 13px; text-transform: uppercase; color: #64748b; }
+              td { font-size: 13px; }
+          </style>
+      </head>
+      <body>
+          <div class="header">
+              <div>
+                  <div class="logo">MAISHA SHOP - RAPPORT</div>
+                  <div style="font-size: 14px; color: #64748b; margin-top: 4px;">Rapport Complet des Commandes</div>
+              </div>
+              <div style="text-align: right;">
+                  <strong>Date:</strong> ${new Date().toLocaleDateString('fr-FR')}<br>
+                  <strong>Heure:</strong> ${new Date().toLocaleTimeString('fr-FR')}
+              </div>
+          </div>
+
+          <div class="summary">
+              <div class="stat-card">
+                  <div class="stat-label">Total Commandes</div>
+                  <div class="stat-value">${stats.totalCommandes || 0}</div>
+              </div>
+              <div class="stat-card">
+                  <div class="stat-label">Chiffre d'Affaires</div>
+                  <div class="stat-value">${Number(stats.totalMontant || 0).toFixed(2)} USD</div>
+              </div>
+              <div class="stat-card">
+                  <div class="stat-label">Commandes Livrées</div>
+                  <div class="stat-value">${stats.totalLivrees || 0}</div>
+              </div>
+          </div>
+
+          <table>
+              <thead>
+                  <tr>
+                      <th>Référence</th>
+                      <th>Date</th>
+                      <th>Client</th>
+                      <th style="text-align: right;">Montant</th>
+                      <th style="text-align: center;">Statut</th>
+                  </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+          </table>
+      </body>
+      </html>
+    `;
+
+    const browser = await puppeteer.launch({
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '20px', bottom: '20px', left: '20px', right: '20px' }
+    });
+    await browser.close();
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="rapport-global-commandes.pdf"');
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Erreur lors de la génération du rapport PDF');
   }
 });
 

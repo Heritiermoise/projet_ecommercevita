@@ -81,7 +81,7 @@ export default function PaiementPage() {
         // On simule une validation pro sans quitter brusquement l'application
         setTimeout(() => {
           window.open(res.paymentUrl!, '_blank')
-          navigate('/commandes')
+          // Suppression de la redirection automatique pour rester sur la page de succès
         }, 1500)
         return
       }
@@ -91,14 +91,14 @@ export default function PaiementPage() {
         clearCart()
         setTimeout(() => {
           window.open(res.whatsappUrl!, '_blank')
-          navigate('/commandes')
+          // Suppression de la redirection automatique pour rester sur la page de succès
         }, 1500)
         return
       }
       if (res.status === 'pending_pin' && res.reference) {
         setServerRef(res.reference)
         setShowPinForm(true)
-        setSuccess(res.message)
+        // On ne met pas success immédiatement pour laisser le formulaire PIN s'afficher
         return
       }
 

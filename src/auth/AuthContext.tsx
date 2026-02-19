@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 
-import { createContext, useContext, useEffect, useState } from 'react'
-import { apiGet, apiPost, setStoredToken, getStoredToken } from '../lib/api'
+import { createContext, useContext, useState } from 'react'
+import { apiPost, setStoredToken, getStoredToken } from '../lib/api'
 
 export type Role = 'client' | 'admin'
 
@@ -51,7 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const saved = localStorage.getItem('auth_user')
     return saved ? JSON.parse(saved) : null
   })
-  const [loading, setLoading] = useState(true)
+  const [loading] = useState(false)
 
   const logout = () => {
     setStoredToken(null)
@@ -64,10 +64,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Désactivé car api/me n'existe pas encore en PHP
     return
   }
-
-  useEffect(() => {
-    setLoading(false)
-  }, [])
 
   const login = async (body: LoginBody) => {
     const res = await apiPost<AuthResponse>('/api/auth/login', body)
