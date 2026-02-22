@@ -2291,8 +2291,8 @@ const distPath = path.join(__dirname, '../dist')
 // 1. Servir les fichiers statiques (JS, CSS, Images)
 app.use(express.static(distPath))
 
-// 2. Route catch-all pour rediriger toutes les autres requêtes vers index.html (Nécessaire pour React Router)
-app.get('*', (req, res) => {
+// 2. Fallback SPA (compatible Express 5): middleware sans pattern wildcard
+app.use((req, res) => {
   // Si la requête commence par /api, c'est une 404 API (pas trouvé ci-dessus)
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ error: 'Endpoint API introuvable' })
