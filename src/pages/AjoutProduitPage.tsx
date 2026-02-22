@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiGet, apiPost, apiPut } from '../lib/api'
+import { normalizeProductImageUrl } from '../lib/image'
+
+const MAX_IMAGE_FILE_SIZE = 2 * 1024 * 1024
 
 type Categorie = {
   id: number
@@ -78,6 +81,11 @@ export default function AjoutProduitPage() {
     if (!Number.isFinite(prixN) || prixN <= 0) return setError('Le prix est invalide.')
     if (!Number.isFinite(stockN) || stockN < 0) return setError('Le stock est invalide.')
 
+    const normalizedImage = normalizeProductImageUrl(imagePrincipale)
+    if (imagePrincipale.trim() && !normalizedImage) {
+      return setError("Image invalide. Utilise une URL http(s) valide ou un chemin commençant par '/'.")
+    }
+
     setSaving(true)
     try {
       const payload = {
@@ -87,7 +95,7 @@ export default function AjoutProduitPage() {
         prix: prixN,
         stockQuantite: stockN,
         marque: marque.trim() ? marque.trim() : null,
-        imagePrincipale: imagePrincipale.trim() ? imagePrincipale.trim() : null,
+        imagePrincipale: normalizedImage,
       }
 
       if (isEdit) {
@@ -109,6 +117,35 @@ export default function AjoutProduitPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleLocalImageFile = (file: File | null) => {
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      setError('Fichier invalide: sélectionne une image (png, jpg, webp, etc.).')
+      return
+    }
+
+    if (file.size > MAX_IMAGE_FILE_SIZE) {
+      setError('Image trop volumineuse. Taille max: 2 MB.')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : ''
+      if (!result.startsWith('data:image/')) {
+        setError('Impossible de lire le fichier image sélectionné.')
+        return
+      }
+      setImagePrincipale(result)
+      setError(null)
+    }
+    reader.onerror = () => {
+      setError("Erreur de lecture du fichier image local.")
+    }
+    reader.readAsDataURL(file)
   }
 
   if (loading) {
@@ -226,12 +263,39 @@ export default function AjoutProduitPage() {
             <span className="font-medium text-slate-700">Image principale (URL)</span>
             <input
               className="h-11 rounded-xl border bg-white px-3 outline-none transition focus:border-slate-400 focus:bg-slate-50"
-              type="url"
+              type="text"
               value={imagePrincipale}
               onChange={(e) => setImagePrincipale(e.target.value)}
-              placeholder="https://..."
+              placeholder="https://... ou /images/produits/mon-image.jpg"
             />
+            <span className="text-xs text-slate-500">
+              Formats acceptés: URL complète (`http(s)://`) ou chemin local commençant par `/`.
+            </span>
           </label>
+
+          <label className="grid gap-1 text-sm">
+            <span className="font-medium text-slate-700">Importer depuis le disque local</span>
+            <input
+              className="h-11 rounded-xl border bg-white px-3 py-2 outline-none transition file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-slate-800"
+              type="file"
+              accept="image/*"
+              onChange={(e) => handleLocalImageFile(e.target.files?.[0] ?? null)}
+            />
+            <span className="text-xs text-slate-500">L'image locale est convertie et enregistrée pour rester visible en ligne.</span>
+          </label>
+
+          {normalizeProductImageUrl(imagePrincipale) ? (
+            <div className="grid gap-2 text-sm">
+              <span className="font-medium text-slate-700">Aperçu image</span>
+              <div className="h-44 w-full overflow-hidden rounded-xl border bg-slate-50">
+                <img
+                  src={normalizeProductImageUrl(imagePrincipale) as string}
+                  alt="Aperçu produit"
+                  className="h-full w-full object-cover"
+                />
+              </div>
+            </div>
+          ) : null}
 
           <label className="grid gap-1 text-sm">
             <span className="font-medium text-slate-700">Description</span>

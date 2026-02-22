@@ -34,6 +34,11 @@ export default function Footer() {
                   Produits
                 </Link>
               </li>
+              <li>
+                <Link className="hover:text-slate-900" to="/apropos">
+                  À propos
+                </Link>
+              </li>
               {user?.role !== 'admin' ? (
                 <li>
                   <Link className="hover:text-slate-900" to="/panier">

@@ -19,6 +19,7 @@ import AdminDashboardPage from './pages/AdminDashboardPage'
 import HistoriquePaiementsPage from './pages/HistoriquePaiementsPage'
 import UtilisateursPage from './pages/UtilisateursPage'
 import VentesPage from './pages/VentesPage'
+import AproposPage from './pages/AproposPage'
 import { RequireAdmin, RequireAuth, RequireClient } from './auth/Require'
 
 function App() {
@@ -28,6 +29,7 @@ function App() {
         <Route path="/" element={<AccueilPage />} />
         <Route path="/connexion" element={<ConnexionPage />} />
         <Route path="/inscription" element={<InscriptionPage />} />
+        <Route path="/apropos" element={<AproposPage />} />
 
         <Route path="/produits" element={<ProduitsPage />} />
         <Route path="/avis" element={<AvisPage />} />

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiGet, apiPut } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
+import { normalizeProductImageUrl, PRODUCT_IMAGE_FALLBACK } from '../lib/image'
 import { CheckCircle, XCircle, Clock, Truck, ShieldCheck, FileText, Share2, PlusCircle } from 'lucide-react'
 
 type Commande = {
@@ -264,8 +265,18 @@ export default function CommandesPage() {
                       {details[c.id].map((detail) => (
                         <div key={detail.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-3">
                           <div className="flex items-center gap-3">
-                            {detail.imagePrincipale ? (
-                              <img src={detail.imagePrincipale} alt="" className="h-10 w-10 rounded-lg object-cover bg-white border border-slate-200" />
+                            {normalizeProductImageUrl(detail.imagePrincipale) ? (
+                              <img
+                                src={normalizeProductImageUrl(detail.imagePrincipale) as string}
+                                alt=""
+                                className="h-10 w-10 rounded-lg object-cover bg-white border border-slate-200"
+                                onError={(e) => {
+                                  const img = e.currentTarget
+                                  if (img.dataset.fallbackApplied === '1') return
+                                  img.dataset.fallbackApplied = '1'
+                                  img.src = PRODUCT_IMAGE_FALLBACK
+                                }}
+                              />
                             ) : (
                               <div className="h-10 w-10 rounded-lg bg-slate-200" />
                             )}

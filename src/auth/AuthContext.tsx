@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 
 import { createContext, useContext, useState } from 'react'
-import { apiPost, setStoredToken, getStoredToken } from '../lib/api'
+import { apiGet, apiPost, setStoredToken, getStoredToken } from '../lib/api'
 
 export type Role = 'client' | 'admin'
 
@@ -61,8 +61,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const refreshMe = async () => {
-    // Désactivé car api/me n'existe pas encore en PHP
-    return
+    try {
+      const res = await apiGet<AuthUser>('/api/me')
+      setUser(res)
+      localStorage.setItem('auth_user', JSON.stringify(res))
+    } catch (e) {
+      console.error('Failed to refresh user:', e)
+      logout()
+    }
   }
 
   const login = async (body: LoginBody) => {

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { apiDelete, apiGet } from '../lib/api'
 import { addToCart } from '../lib/cart'
+import { normalizeProductImageUrl, PRODUCT_IMAGE_FALLBACK } from '../lib/image'
 import { Pencil, Trash2 } from 'lucide-react'
 
 type Categorie = {
@@ -269,12 +270,18 @@ export default function ProduitsPage() {
                 className="rounded-2xl border bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
               >
                 <div className="h-36 w-full overflow-hidden rounded-xl bg-slate-100">
-                  {p.imagePrincipale ? (
+                  {normalizeProductImageUrl(p.imagePrincipale) ? (
                     <img
                       className="h-full w-full object-cover"
-                      src={p.imagePrincipale}
+                      src={normalizeProductImageUrl(p.imagePrincipale) as string}
                       alt={p.nom}
                       loading="lazy"
+                      onError={(e) => {
+                        const img = e.currentTarget
+                        if (img.dataset.fallbackApplied === '1') return
+                        img.dataset.fallbackApplied = '1'
+                        img.src = PRODUCT_IMAGE_FALLBACK
+                      }}
                     />
                   ) : (
                     <div className="h-full w-full bg-gradient-to-br from-indigo-500 to-fuchsia-500" />

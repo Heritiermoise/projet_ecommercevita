@@ -9,6 +9,7 @@ import {
   type CartItem,
 } from '../lib/cart'
 import { buildWhatsAppUrl } from '../lib/whatsapp'
+import { normalizeProductImageUrl, PRODUCT_IMAGE_FALLBACK } from '../lib/image'
 
 function formatAmount(amount: number) {
   return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'USD' }).format(amount)
@@ -105,8 +106,18 @@ export default function PanierPage() {
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex min-w-0 items-center gap-4">
                     <div className="h-16 w-16 overflow-hidden rounded-xl bg-slate-100">
-                      {i.imagePrincipale ? (
-                        <img className="h-full w-full object-cover" src={i.imagePrincipale} alt={i.nom} />
+                      {normalizeProductImageUrl(i.imagePrincipale) ? (
+                        <img
+                          className="h-full w-full object-cover"
+                          src={normalizeProductImageUrl(i.imagePrincipale) as string}
+                          alt={i.nom}
+                          onError={(e) => {
+                            const img = e.currentTarget
+                            if (img.dataset.fallbackApplied === '1') return
+                            img.dataset.fallbackApplied = '1'
+                            img.src = PRODUCT_IMAGE_FALLBACK
+                          }}
+                        />
                       ) : (
                         <div className="h-full w-full bg-gradient-to-br from-indigo-500 to-fuchsia-500" />
                       )}

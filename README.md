@@ -11,7 +11,7 @@ npm run dev
 
 ## API (MySQL)
 
-Le front récupère les données via `/api/*` (proxy Vite). Une petite API Express est dans [server/index.js](server/index.js).
+Le front récupère les données via `/api/*` (proxy Vite). L’API Express est dans [backend/index.js](backend/index.js).
 
 1) Crée un fichier `.env` à la racine (copie de [.env.example](.env.example))
 2) Configure `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
@@ -20,6 +20,35 @@ Le front récupère les données via `/api/*` (proxy Vite). Une petite API Expre
 ```bash
 npm run dev:api
 ```
+
+## Déploiement Vercel (Front + Back dans le même repo)
+
+- Le backend Node est exposé par [backend/index.js](backend/index.js) (export par défaut, sans `app.listen`).
+- Le routage Vercel est défini dans [vercel.json](vercel.json):
+	- `/api/*` vers le backend Node
+	- le reste vers `index.html` (SPA React)
+
+### Contrainte numéro téléphone unique (important)
+
+Avant le déploiement final, exécute la migration SQL sur ta base distante:
+
+- [backend/sql/001_phone_unique_constraint.sql](backend/sql/001_phone_unique_constraint.sql)
+
+Cette migration ajoute une contrainte d’unicité sur un téléphone normalisé (espaces, `+`, `-`, parenthèses, points ignorés), pour empêcher les doublons même avec des formats différents.
+
+## Images du site (produits et bannières)
+
+- Dossier public recommandé pour les images versionnées: [public/media/README.md](public/media/README.md)
+- Tu peux utiliser:
+	- URL web (`https://...`)
+	- chemin public (`/media/produits/...`, `/media/bannieres/...`)
+	- import local depuis le disque (converti pour rester visible en ligne)
+
+### Migration DB pour images importées localement
+
+Pour stocker des images importées localement (format base64), exécute:
+
+- [backend/sql/003_expand_image_columns_for_local_upload.sql](backend/sql/003_expand_image_columns_for_local_upload.sql)
 
 ## Paiement (Airtel Money & WhatsApp)
 

@@ -25,6 +25,13 @@ const BASE_URL = process.env.APP_URL || 'http://localhost:3001'
 const app = express()
 app.use(express.json())
 
+app.use((err, _req, res, next) => {
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ error: 'JSON invalide dans la requête.' })
+  }
+  next(err)
+})
+
 // Config Mail (Nodemailer) - Configuration robuste avec IP plutôt que nom de domaine
 const transporter = nodemailer.createTransport({
   host: '74.125.133.108', // IP directe de smtp.gmail.com
@@ -238,12 +245,19 @@ const registerSchema = z.object({
   role: z.enum(['client', 'admin']).default('client'),
 })
 
-app.post('/api/auth/register', async (req, res) => {
+function normalizePhone(phone) {
+  if (!phone) return null
+  const normalized = String(phone).trim().replace(/\D+/g, '')
+  return normalized.length ? normalized : null
+}
+
+app.post(['/api/auth/register', '/api/inscription.php'], async (req, res) => {
   const parsed = registerSchema.safeParse(req.body)
   if (!parsed.success) {
     return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() })
   }
   const body = parsed.data
+  const normalizedPhone = normalizePhone(body.telephone)
   try {
     // Vérifier si l'email existe déjà
     const [[existingEmail]] = await pool.query('SELECT id FROM utilisateurs WHERE email = :email LIMIT 1', { 
@@ -254,10 +268,16 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     // Vérifier si le téléphone existe déjà
-    if (body.telephone) {
-       const [[existingTel]] = await pool.query('SELECT id FROM utilisateurs WHERE telephone = :telephone LIMIT 1', { 
-         telephone: body.telephone 
-       })
+    if (normalizedPhone) {
+       const [[existingTel]] = await pool.query(
+         `SELECT id
+          FROM utilisateurs
+          WHERE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telephone, ''), ' ', ''), '-', ''), '.', ''), '(', ''), ')', ''), '+', '') = :telephone
+          LIMIT 1`,
+         {
+           telephone: normalizedPhone,
+         },
+       )
        if (existingTel) {
          return res.status(409).json({ error: "Ce numéro de téléphone est déjà utilisé." })
        }
@@ -280,7 +300,7 @@ app.post('/api/auth/register', async (req, res) => {
         motDePasse: passwordHash,
         nom: body.nom ?? null,
         prenom: body.prenom ?? null,
-        telephone: body.telephone ?? null,
+        telephone: body.telephone?.trim() || null,
         role: body.role,
       },
     )
@@ -290,12 +310,23 @@ app.post('/api/auth/register', async (req, res) => {
       email: body.email,
       nom: body.nom ?? null,
       prenom: body.prenom ?? null,
+      telephone: body.telephone ?? null,
       role: body.role,
     }
 
     const token = signToken({ id: user.id, email: user.email, role: user.role })
     res.status(201).json({ token, user })
   } catch (e) {
+    if (e && typeof e === 'object' && e.code === 'ER_DUP_ENTRY') {
+      const message = String(e.sqlMessage || e.message || '')
+      if (message.includes('telephone') || message.includes('uk_utilisateurs_telephone_norm')) {
+        return res.status(409).json({ error: 'Ce numéro de téléphone est déjà utilisé.' })
+      }
+      if (message.includes('email')) {
+        return res.status(409).json({ error: 'Cet email est déjà utilisé.' })
+      }
+      return res.status(409).json({ error: 'Conflit de données: valeur déjà utilisée.' })
+    }
     res.status(500).json({ error: String(e) })
   }
 })
@@ -305,7 +336,7 @@ const loginSchema = z.object({
   motDePasse: z.string().min(1),
 })
 
-app.post('/api/auth/login', async (req, res) => {
+app.post(['/api/auth/login', '/api/connexion.php'], async (req, res) => {
   const parsed = loginSchema.safeParse(req.body)
   if (!parsed.success) {
     return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() })
@@ -623,8 +654,51 @@ const createProduitSchema = z.object({
     return val
   }, z.number().int().min(0, 'Le stock ne peut pas être négatif').default(0)),
   marque: z.string().max(255).nullable().optional(),
-  imagePrincipale: z.string().max(2000).nullable().optional(),
+  imagePrincipale: z.string().max(8_000_000).nullable().optional(),
 })
+
+function sanitizeProductImageUrl(value) {
+  if (value === null || value === undefined) return null
+  let normalized = String(value).trim()
+  if (!normalized) return null
+
+  normalized = normalized.replace(/^['"]+|['"]+$/g, '')
+  normalized = normalized.replace(/\\+/g, '/')
+
+  if (!normalized) return null
+
+  if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(normalized)) {
+    return normalized
+  }
+
+  if (/^https?:\/\//i.test(normalized)) {
+    try {
+      const parsed = new URL(normalized)
+      const host = parsed.hostname
+      const validHost =
+        host === 'localhost' ||
+        host.includes('.') ||
+        /^\d{1,3}(\.\d{1,3}){3}$/.test(host) ||
+        (host.startsWith('[') && host.endsWith(']'))
+      if (!validHost) return null
+      return parsed.toString()
+    } catch {
+      return null
+    }
+  }
+
+  if (normalized.startsWith('//')) return `https:${normalized}`
+
+  if (/^[A-Za-z]:\//.test(normalized)) {
+    normalized = normalized.replace(/^[A-Za-z]:\//, '/')
+  }
+
+  if (normalized.startsWith('/')) return normalized
+
+  if (normalized.includes('/')) return `/${normalized.replace(/^\/+/, '')}`
+
+  return null
+}
 
 app.post('/api/produits', requireAuth, requireRole('admin'), async (req, res) => {
   const parsed = createProduitSchema.safeParse(req.body)
@@ -637,6 +711,13 @@ app.post('/api/produits', requireAuth, requireRole('admin'), async (req, res) =>
   }
 
   const body = parsed.data
+  const sanitizedImage = sanitizeProductImageUrl(body.imagePrincipale)
+
+  if (body.imagePrincipale && !sanitizedImage) {
+    return res.status(400).json({
+      error: "URL d'image invalide. Utilisez une URL http(s) valide ou un chemin commençant par /."
+    })
+  }
 
   try {
     const [[existing]] = await pool.query(
@@ -676,7 +757,7 @@ app.post('/api/produits', requireAuth, requireRole('admin'), async (req, res) =>
         prix: body.prix,
         stockQuantite: body.stockQuantite,
         marque: body.marque ?? null,
-        imagePrincipale: body.imagePrincipale ?? null,
+        imagePrincipale: sanitizedImage,
       },
     )
 
@@ -733,6 +814,13 @@ app.put('/api/produits/:id', requireAuth, requireRole('admin'), async (req, res)
 
   const id = Number(req.params.id)
   const body = parsed.data
+  const sanitizedImage = sanitizeProductImageUrl(body.imagePrincipale)
+
+  if (body.imagePrincipale && !sanitizedImage) {
+    return res.status(400).json({
+      error: "URL d'image invalide. Utilisez une URL http(s) valide ou un chemin commençant par /."
+    })
+  }
 
   const conn = await pool.getConnection()
   try {
@@ -763,7 +851,7 @@ app.put('/api/produits/:id', requireAuth, requireRole('admin'), async (req, res)
         prix: body.prix,
         stockQuantite: body.stockQuantite,
         marque: body.marque ?? null,
-        imagePrincipale: body.imagePrincipale ?? null,
+        imagePrincipale: sanitizedImage,
       },
     )
 
@@ -1134,6 +1222,75 @@ async function triggerVente(conn, reference) {
   }
 }
 
+async function triggerTransactionPaiement(conn, commandeId, options = {}) {
+  const source = options.source || 'system'
+  const referenceExterne = options.referenceExterne || null
+  const rawData = options.rawData ?? null
+
+  const [[cmd]] = await conn.query(
+    `SELECT id, reference, montant_total, mode_paiement
+     FROM commandes
+     WHERE id = :id
+     LIMIT 1`,
+    { id: Number(commandeId) },
+  )
+
+  if (!cmd?.id) return
+
+  const [[existing]] = await conn.query(
+    `SELECT id, statut
+     FROM transactions_paiement
+     WHERE commande_id = :commandeId
+     ORDER BY id DESC
+     LIMIT 1`,
+    { commandeId: cmd.id },
+  )
+
+  const payload = JSON.stringify({
+    source,
+    referenceCommande: cmd.reference,
+    event: 'validation_admin_paiement',
+    data: rawData,
+    occurredAt: new Date().toISOString(),
+  })
+
+  if (existing?.id) {
+    await conn.query(
+      `UPDATE transactions_paiement
+       SET montant = :montant,
+           devise = 'USD',
+           mode_paiement = COALESCE(:modePaiement, mode_paiement),
+           statut = 'reussi',
+           reference_externe = COALESCE(:referenceExterne, reference_externe, :fallbackReference),
+           donnees_brutes = :raw
+       WHERE id = :id`,
+      {
+        id: existing.id,
+        montant: cmd.montant_total,
+        modePaiement: cmd.mode_paiement ?? null,
+        referenceExterne,
+        fallbackReference: cmd.reference,
+        raw: payload,
+      },
+    )
+    return
+  }
+
+  await conn.query(
+    `INSERT INTO transactions_paiement
+      (commande_id, reference_externe, montant, devise, mode_paiement, statut, donnees_brutes)
+     VALUES
+      (:commandeId, :referenceExterne, :montant, 'USD', :modePaiement, 'reussi', :raw)`,
+    {
+      commandeId: cmd.id,
+      referenceExterne: referenceExterne || cmd.reference,
+      montant: cmd.montant_total,
+      modePaiement: cmd.mode_paiement ?? null,
+      raw: payload,
+    },
+  )
+}
+
 app.post('/api/paiements/valider-pin', requireAuth, requireRole('client'), async (req, res) => {
   const { pin, reference } = req.body
   console.log(`[AIRTEL PIN] Validation du PIN pour ${reference}`)
@@ -1371,7 +1528,7 @@ app.put('/api/commandes/:id', requireAuth, requireRole('admin'), async (req, res
 
     // 1. Récupérer l'état actuel pour comparer
     const [[oldCmd]] = await conn.query(
-      'SELECT id, reference, utilisateur_id, statut_paiement, statut_livraison, montant_total FROM commandes WHERE id = :id FOR UPDATE',
+      'SELECT id, reference, utilisateur_id, statut_paiement, statut_livraison, montant_total, mode_paiement FROM commandes WHERE id = :id FOR UPDATE',
       { id: commandeId }
     )
 
@@ -1433,6 +1590,14 @@ app.put('/api/commandes/:id', requireAuth, requireRole('admin'), async (req, res
 
     if (shouldEnsureVente) {
       await triggerVente(conn, oldCmd.reference)
+      await triggerTransactionPaiement(conn, oldCmd.id, {
+        source: 'admin_validation',
+        rawData: {
+          adminId: req.user?.id ?? null,
+          previousStatus: oldCmd.statut_paiement,
+          nextStatus: 'paye',
+        },
+      })
     }
 
     await conn.commit()
@@ -1447,7 +1612,7 @@ app.put('/api/commandes/:id', requireAuth, requireRole('admin'), async (req, res
 
 const banniereSchema = z.object({
   titre: z.string().min(1).max(100),
-  imageUrl: z.string().url().max(255),
+  imageUrl: z.string().max(8_000_000),
   lienRedirection: z.string().url().max(255).nullable().optional(),
   actif: z.number().int().min(0).max(1).default(1),
 })
@@ -1470,13 +1635,20 @@ app.post('/api/bannieres', requireAuth, requireRole('admin'), async (req, res) =
   }
 
   const body = parsed.data
+  const sanitizedBannerImage = sanitizeProductImageUrl(body.imageUrl)
+  if (!sanitizedBannerImage) {
+    return res.status(400).json({
+      error: "Image bannière invalide. Utilisez une URL http(s), un chemin '/media/...', ou un import local."
+    })
+  }
+
   try {
     const [result] = await pool.query(
       `INSERT INTO bannieres (titre, image_url, lien_redirection, actif)
        VALUES (:titre, :imageUrl, :lienRedirection, :actif)`,
       {
         titre: body.titre,
-        imageUrl: body.imageUrl,
+        imageUrl: sanitizedBannerImage,
         lienRedirection: body.lienRedirection ?? null,
         actif: body.actif,
       },
@@ -2109,6 +2281,10 @@ app.get('/api/admin/rapport-commandes/pdf', requireAuth, requireRole('admin'), a
 });
 
 const port = Number(process.env.PORT ?? 3001)
-app.listen(port, () => {
-  console.log(`API listening on http://localhost:${port}`)
-})
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`API listening on http://localhost:${port}`)
+  })
+}
+
+export default app

@@ -22,6 +22,7 @@ import {
   Users,
   X,
   DollarSign,
+  Info,
 } from "lucide-react"
 import { useAuth } from "../auth/AuthContext"
 import { buildWhatsAppUrl } from "../lib/whatsapp"
@@ -82,7 +83,10 @@ export default function Header() {
     : null
 
   const navItems: NavItem[] = useMemo(() => {
-    const base = [{ label: "Accueil", to: "/", icon: <Home className="h-4 w-4" /> }]
+    const base = [
+      { label: "Accueil", to: "/", icon: <Home className="h-4 w-4" /> },
+      { label: "À propos", to: "/apropos", icon: <Info className="h-4 w-4" /> },
+    ]
     if (user?.role === "admin") {
       base.push({ label: "Tableau de bord", to: "/admin", icon: <LayoutDashboard className="h-4 w-4" /> })
       base.push(
