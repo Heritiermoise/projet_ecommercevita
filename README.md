@@ -13,6 +13,8 @@ npm run dev
 
 Le front récupère les données via `/api/*` (proxy Vite). L’API Express est dans [backend/index.js](backend/index.js).
 
+Note: cette API utilise un driver **MySQL/MariaDB** (`mysql2`). Une clé API Supabase (`sb_secret_*`) ne remplace pas des identifiants SQL de connexion.
+
 1) Crée un fichier `.env` à la racine (copie de [.env.example](.env.example))
 2) Configure `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
 3) Lance l’API:
@@ -27,6 +29,20 @@ npm run dev:api
 - Le routage Vercel est défini dans [vercel.json](vercel.json):
 	- `/api/*` vers le backend Node
 	- le reste vers `index.html` (SPA React)
+
+### Variables d'environnement à définir sur Vercel
+
+Définis ces variables dans le dashboard Vercel (Project Settings > Environment Variables):
+
+- `JWT_SECRET`
+- `CORS_ORIGIN`
+- Soit `DATABASE_URL` (recommandé), soit les variables séparées `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+- `DB_SSL=true` si ton hébergeur DB exige TLS
+
+Important sécurité:
+
+- Ne commit jamais de clé secrète (`sb_secret_*`, mots de passe DB, JWT, SMTP) dans Git.
+- Si une clé a été partagée publiquement, régénère-la immédiatement.
 
 ### Contrainte numéro téléphone unique (important)
 
