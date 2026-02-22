@@ -41,6 +41,20 @@ Définis ces variables dans le dashboard Vercel (Project Settings > Environment 
 - `VITE_SUPABASE_URL`: URL de ton projet Supabase
 - `VITE_SUPABASE_ANON_KEY`: TA clé anonyme Supabase (Anon Key)
 
+### Variables Railway (MySQL)
+
+Le backend accepte maintenant automatiquement les noms Railway courants:
+
+- URL de connexion: `DATABASE_URL`, `URL_PUBLIC_MYSQL`, `URL_MYSQL`, `MYSQL_URL`, `MYSQL_PRIVATE_URL`
+- Variables séparées: `MYSQLHOST`/`MYSQL_HOST`, `MYSQLPORT`/`MYSQL_PORT`, `MYSQLUSER`/`MYSQL_USER`, `MYSQLPASSWORD`/`MYSQL_PASSWORD`, `MYSQLDATABASE`/`MYSQL_DATABASE`
+
+Recommandé sur Railway:
+
+1. Définir seulement `DATABASE_URL` avec ta valeur Railway publique MySQL
+2. Définir `DB_SSL=true`
+3. Définir `JWT_SECRET` (long et aléatoire)
+4. Laisser `start` = `node backend/index.js`
+
 Important sécurité:
 
 - Ne commit jamais de clé secrète (`sb_secret_*`, mots de passe DB, JWT, SMTP) dans Git.

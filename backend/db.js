@@ -3,7 +3,15 @@ import dotenv from 'dotenv'
 
 dotenv.config()
 
-const useSsl = ['1', 'true', 'yes'].includes(String(process.env.DB_SSL || '').toLowerCase())
+function getFirstDefinedEnv(keys, defaultValue) {
+  for (const key of keys) {
+    const value = process.env[key]
+    if (value !== undefined && String(value).trim() !== '') return value
+  }
+  return defaultValue
+}
+
+const useSsl = ['1', 'true', 'yes'].includes(String(getFirstDefinedEnv(['DB_SSL', 'MYSQL_SSL'], 'false')).toLowerCase())
 
 const baseConfig = {
   waitForConnections: true,
@@ -19,7 +27,10 @@ const baseConfig = {
 
 let pool
 
-const dbUrl = process.env.DATABASE_URL || process.env.MYSQL_URL || process.env.MYSQL_PRIVATE_URL || process.env.MYSQLURL
+const dbUrl = getFirstDefinedEnv(
+  ['DATABASE_URL', 'MYSQL_URL', 'MYSQL_PRIVATE_URL', 'MYSQL_PUBLIC_URL', 'URL_MYSQL', 'URL_PUBLIC_MYSQL', 'MYSQLURL'],
+  '',
+)
 
 if (dbUrl) {
   console.log('[DATABASE] Connecting via Connection String...')
@@ -33,19 +44,28 @@ if (dbUrl) {
     ...baseConfig,
   })
 } else {
-  const requiredEnv = ['DB_HOST', 'DB_USER', 'DB_NAME']
+  const dbHost = getFirstDefinedEnv(['DB_HOST', 'MYSQL_HOST', 'MYSQLHOST'], '')
+  const dbPort = Number(getFirstDefinedEnv(['DB_PORT', 'MYSQL_PORT', 'MYSQLPORT'], '3306'))
+  const dbUser = getFirstDefinedEnv(['DB_USER', 'MYSQL_USER', 'MYSQLUSER'], 'root')
+  const dbPassword = getFirstDefinedEnv(['DB_PASSWORD', 'MYSQL_PASSWORD', 'MYSQLPASSWORD', 'MYSQL_ROOT_PASSWORD'], '')
+  const dbName = getFirstDefinedEnv(['DB_NAME', 'MYSQL_DATABASE', 'MYSQLDATABASE'], '')
+
+  const requiredEnv = [
+    ['DB_HOST/MYSQL_HOST/MYSQLHOST', dbHost],
+    ['DB_NAME/MYSQL_DATABASE/MYSQLDATABASE', dbName],
+  ]
   for (const key of requiredEnv) {
-    if (!process.env[key]) {
-      throw new Error(`Missing required env var: ${key}`)
+    if (!key[1]) {
+      throw new Error(`Missing required env var(s): ${key[0]}`)
     }
   }
 
   pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT ?? 3306),
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME,
+    host: dbHost,
+    port: dbPort,
+    user: dbUser,
+    password: dbPassword,
+    database: dbName,
     ...baseConfig,
   })
 }
