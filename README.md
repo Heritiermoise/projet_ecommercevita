@@ -38,6 +38,8 @@ Définis ces variables dans le dashboard Vercel (Project Settings > Environment 
 - `CORS_ORIGIN`
 - Soit `DATABASE_URL` (recommandé), soit les variables séparées `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
 - `DB_SSL=true` si ton hébergeur DB exige TLS
+- `VITE_SUPABASE_URL`: URL de ton projet Supabase
+- `VITE_SUPABASE_ANON_KEY`: TA clé anonyme Supabase (Anon Key)
 
 Important sécurité:
 

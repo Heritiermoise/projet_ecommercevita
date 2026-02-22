@@ -20,6 +20,12 @@ const baseConfig = {
 let pool
 
 if (process.env.DATABASE_URL) {
+  console.log('[DATABASE] Connecting via DATABASE_URL...')
+  // Check if it's a postgres URL while using mysql2
+  if (process.env.DATABASE_URL.startsWith('postgres://')) {
+    console.error('[DATABASE] ERROR: You are using a PostgreSQL URL with a MySQL driver!')
+    console.error('If you moved to Supabase Postgres, you must adapt the backend or use a MySQL compatible DB.')
+  }
   pool = mysql.createPool({
     uri: process.env.DATABASE_URL,
     ...baseConfig,
