@@ -241,6 +241,20 @@ app.use(
   }),
 )
 
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', service: 'api' })
+})
+
+app.get('/api/health/db', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1 as ok')
+    res.json({ status: 'ok', service: 'db' })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Erreur DB inconnue'
+    res.status(500).json({ status: 'error', service: 'db', error: message })
+  }
+})
+
 const registerSchema = z.object({
   email: z.string().email(),
   motDePasse: z.string().min(6).max(255),

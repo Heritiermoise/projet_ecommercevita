@@ -22,7 +22,14 @@ export function setStoredToken(token: string | null) {
   }
 }
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '')
+const rawApiBaseUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim().replace(/\/$/, '')
+
+function isLocalDevHost(url: string) {
+  return /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(url)
+}
+
+const API_BASE_URL =
+  rawApiBaseUrl && import.meta.env.PROD && isLocalDevHost(rawApiBaseUrl) ? '' : rawApiBaseUrl
 
 function buildUrl(path: string) {
   if (path.startsWith('http://') || path.startsWith('https://')) return path
@@ -37,7 +44,13 @@ async function apiFetch(path: string, init?: RequestInit) {
     headers.set('Authorization', `Bearer ${token}`)
   }
 
-  return fetch(buildUrl(path), { ...init, headers })
+  const url = buildUrl(path)
+  try {
+    return await fetch(url, { ...init, headers })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Erreur réseau inconnue'
+    throw new Error(`Échec de la récupération (${url}): ${message}`)
+  }
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
