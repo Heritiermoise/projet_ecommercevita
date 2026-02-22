@@ -11,6 +11,28 @@ function getFirstDefinedEnv(keys, defaultValue) {
   return defaultValue
 }
 
+function isRailwayInternal(value) {
+  return /railway\.internal/i.test(String(value || ''))
+}
+
+function pickDatabaseUrl() {
+  const publicCandidates = [
+    'DATABASE_URL',
+    'URL_PUBLIC_MYSQL',
+    'MYSQL_PUBLIC_URL',
+    'MYSQL_URL',
+    'MYSQLURL',
+  ]
+
+  for (const key of publicCandidates) {
+    const value = process.env[key]
+    if (value && !isRailwayInternal(value)) return value
+  }
+
+  const anyCandidates = ['DATABASE_URL', 'URL_PUBLIC_MYSQL', 'MYSQL_PUBLIC_URL', 'MYSQL_URL', 'MYSQLURL', 'URL_MYSQL', 'MYSQL_PRIVATE_URL']
+  return getFirstDefinedEnv(anyCandidates, '')
+}
+
 const useSsl = ['1', 'true', 'yes'].includes(String(getFirstDefinedEnv(['DB_SSL', 'MYSQL_SSL'], 'false')).toLowerCase())
 
 const baseConfig = {
@@ -27,10 +49,7 @@ const baseConfig = {
 
 let pool
 
-const dbUrl = getFirstDefinedEnv(
-  ['DATABASE_URL', 'MYSQL_URL', 'MYSQL_PRIVATE_URL', 'MYSQL_PUBLIC_URL', 'URL_MYSQL', 'URL_PUBLIC_MYSQL', 'MYSQLURL'],
-  '',
-)
+const dbUrl = pickDatabaseUrl()
 
 if (dbUrl) {
   console.log('[DATABASE] Connecting via Connection String...')
@@ -44,7 +63,10 @@ if (dbUrl) {
     ...baseConfig,
   })
 } else {
-  const dbHost = getFirstDefinedEnv(['DB_HOST', 'MYSQL_HOST', 'MYSQLHOST'], '')
+  const dbHostRaw = getFirstDefinedEnv(['DB_HOST', 'MYSQL_HOST', 'MYSQLHOST'], '')
+  const dbHost = isRailwayInternal(dbHostRaw)
+    ? getFirstDefinedEnv(['MYSQL_PUBLIC_HOST', 'DB_PUBLIC_HOST'], dbHostRaw)
+    : dbHostRaw
   const dbPort = Number(getFirstDefinedEnv(['DB_PORT', 'MYSQL_PORT', 'MYSQLPORT'], '3306'))
   const dbUser = getFirstDefinedEnv(['DB_USER', 'MYSQL_USER', 'MYSQLUSER'], 'root')
   const dbPassword = getFirstDefinedEnv(['DB_PASSWORD', 'MYSQL_PASSWORD', 'MYSQLPASSWORD', 'MYSQL_ROOT_PASSWORD'], '')

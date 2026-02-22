@@ -55,6 +55,8 @@ Recommandé sur Railway:
 3. Définir `JWT_SECRET` (long et aléatoire)
 4. Laisser `start` = `node backend/index.js`
 
+Important: n'utilise pas `mysql.railway.internal` pour un service qui n'est pas sur le réseau privé Railway, sinon tu auras `getaddrinfo ENOTFOUND mysql.railway.internal`.
+
 Important sécurité:
 
 - Ne commit jamais de clé secrète (`sb_secret_*`, mots de passe DB, JWT, SMTP) dans Git.
