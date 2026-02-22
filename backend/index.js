@@ -245,6 +245,24 @@ app.post('/api/auth/register', async (req, res) => {
   }
   const body = parsed.data
   try {
+    // Vérifier si l'email existe déjà
+    const [[existingEmail]] = await pool.query('SELECT id FROM utilisateurs WHERE email = :email LIMIT 1', { 
+      email: body.email 
+    })
+    if (existingEmail) {
+      return res.status(409).json({ error: "Cet email est déjà utilisé." })
+    }
+
+    // Vérifier si le téléphone existe déjà
+    if (body.telephone) {
+       const [[existingTel]] = await pool.query('SELECT id FROM utilisateurs WHERE telephone = :telephone LIMIT 1', { 
+         telephone: body.telephone 
+       })
+       if (existingTel) {
+         return res.status(409).json({ error: "Ce numéro de téléphone est déjà utilisé." })
+       }
+    }
+
     if (body.role === 'admin') {
       const [[admin]] = await pool.query("SELECT COUNT(*) as count FROM utilisateurs WHERE role = 'admin'")
       if (Number(admin?.count ?? 0) >= 1) {

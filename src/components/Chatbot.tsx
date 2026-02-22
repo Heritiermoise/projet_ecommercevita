@@ -59,7 +59,7 @@ export default function Chatbot() {
           {/* Header */}
           <div className="flex items-center justify-between bg-slate-900 p-4 text-white">
             <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-500">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700">
                 <Bot size={18} />
               </div>
               <div>
@@ -83,14 +83,14 @@ export default function Chatbot() {
                 className={`flex gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
               >
                 <div className={`mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white ${
-                  msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-800'
+                  msg.role === 'user' ? 'bg-slate-900' : 'bg-slate-700'
                 }`}>
                   {msg.role === 'user' ? <User size={12} /> : <Bot size={12} />}
                 </div>
                 <div
                   className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm shadow-sm ${
                     msg.role === 'user'
-                      ? 'bg-indigo-600 text-white rounded-tr-none'
+                      ? 'bg-slate-900 text-white rounded-tr-none'
                       : 'bg-white text-slate-800 border border-slate-100 rounded-tl-none'
                   }`}
                 >
@@ -100,11 +100,11 @@ export default function Chatbot() {
             ))}
             {isLoading && (
               <div className="flex gap-2 justify-start">
-                <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-800 text-white">
+                <div className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-700 text-white">
                   <Bot size={12} />
                 </div>
                 <div className="bg-white rounded-2xl px-3 py-2 text-sm shadow-sm border border-slate-100 rounded-tl-none flex items-center gap-2">
-                  <Loader2 size={14} className="animate-spin text-indigo-500" />
+                  <Loader2 size={14} className="animate-spin text-slate-500" />
                   L'IA réfléchit...
                 </div>
               </div>
@@ -119,7 +119,7 @@ export default function Chatbot() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Posez votre question..."
-                className="flex-1 rounded-xl bg-slate-100 px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
+                className="flex-1 rounded-xl bg-slate-100 px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-900/10"
               />
               <button
                 type="submit"
@@ -137,7 +137,7 @@ export default function Chatbot() {
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={`flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all active:scale-95 ${
-          isOpen ? 'bg-rose-500 text-white' : 'bg-slate-900 text-white'
+          isOpen ? 'bg-slate-800 text-white' : 'bg-slate-900 text-white'
         }`}
       >
         {isOpen ? <X size={24} /> : <MessageSquare size={24} />}
