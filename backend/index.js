@@ -1,5 +1,7 @@
 import express from 'express'
 import cors from 'cors'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import { z } from 'zod'
 import { pool } from './db.js'
@@ -10,6 +12,9 @@ import dns from 'node:dns'
 import QRCode from 'qrcode'
 import puppeteer from 'puppeteer'
 import { requireAuth, requireRole, signToken } from './auth.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 // Correction professionnelle des erreurs DNS ETIMEOUT sur Windows/Node.js
 dns.setDefaultResultOrder('ipv4first')
@@ -2279,6 +2284,22 @@ app.get('/api/admin/rapport-commandes/pdf', requireAuth, requireRole('admin'), a
     res.status(500).send('Erreur lors de la génération du rapport PDF');
   }
 });
+
+// --- SERVIR LE FRONTEND (SPA) ---
+const distPath = path.join(__dirname, '../dist')
+
+// 1. Servir les fichiers statiques (JS, CSS, Images)
+app.use(express.static(distPath))
+
+// 2. Route catch-all pour rediriger toutes les autres requêtes vers index.html (Nécessaire pour React Router)
+app.get('*', (req, res) => {
+  // Si la requête commence par /api, c'est une 404 API (pas trouvé ci-dessus)
+  if (req.path.startsWith('/api')) {
+    return res.status(404).json({ error: 'Endpoint API introuvable' })
+  }
+  // Sinon, on envoie le fichier index.html du build React
+  res.sendFile(path.join(distPath, 'index.html'))
+})
 
 const port = Number(process.env.PORT ?? 3001)
 if (!process.env.VERCEL) {
