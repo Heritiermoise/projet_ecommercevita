@@ -22,7 +22,10 @@ export function setStoredToken(token: string | null) {
   }
 }
 
-const rawApiBaseUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim().replace(/\/$/, '')
+const rawApiBaseUrl = (
+  (import.meta.env.VITE_API_URL as string | undefined) ??
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)
+)?.trim().replace(/\/$/, '')
 
 function isLocalDevHost(url: string) {
   return /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(url)
@@ -37,6 +40,8 @@ function buildUrl(path: string) {
   return path
 }
 
+const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS ?? 15000)
+
 async function apiFetch(path: string, init?: RequestInit) {
   const token = getStoredToken()
   const headers = new Headers(init?.headers)
@@ -45,11 +50,20 @@ async function apiFetch(path: string, init?: RequestInit) {
   }
 
   const url = buildUrl(path)
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS)
   try {
-    return await fetch(url, { ...init, headers })
+    return await fetch(url, { ...init, headers, signal: controller.signal })
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Erreur réseau inconnue'
+    const message =
+      error instanceof Error && error.name === 'AbortError'
+        ? `Timeout après ${API_TIMEOUT_MS}ms`
+        : error instanceof Error
+          ? error.message
+          : 'Erreur réseau inconnue'
     throw new Error(`Échec de la récupération (${url}): ${message}`)
+  } finally {
+    window.clearTimeout(timeoutId)
   }
 }
 

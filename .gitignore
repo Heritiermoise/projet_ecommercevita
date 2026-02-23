@@ -27,3 +27,21 @@ dist-ssr
 .env
 .env.*
 !.env.example
+# System files and DLLs (from XAMPP/development tools)
+*.dll
+*.exe
+*.ini
+*.lock
+*.cpuprofile
+LICENSE-openssl
+gpl.txt
+license.txt
+plugins/
+scripts/
+railway.toml
+vercel.json
+errors.log
+output.txt
+tsc_errors.txt
+vite.log
+test-db.js

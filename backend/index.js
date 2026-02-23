@@ -4,7 +4,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
 import { z } from 'zod'
-import { pool } from './db.js'
+import { pool, testDbConnection } from './db.js'
 import bcrypt from 'bcryptjs'
 import axios from 'axios'
 import nodemailer from 'nodemailer'
@@ -247,7 +247,7 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/health/db', async (_req, res) => {
   try {
-    await pool.query('SELECT 1 as ok')
+    await testDbConnection()
     res.json({ status: 'ok', service: 'db' })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erreur DB inconnue'
@@ -2314,12 +2314,5 @@ app.use((req, res) => {
   // Sinon, on envoie le fichier index.html du build React
   res.sendFile(path.join(distPath, 'index.html'))
 })
-
-const port = Number(process.env.PORT ?? 3001)
-if (!process.env.VERCEL) {
-  app.listen(port, () => {
-    console.log(`API listening on http://localhost:${port}`)
-  })
-}
 
 export default app

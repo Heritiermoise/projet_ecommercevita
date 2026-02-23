@@ -53,7 +53,26 @@ Recommandé sur Railway:
 1. Définir seulement `DATABASE_URL` avec ta valeur Railway publique MySQL
 2. Définir `DB_SSL=true`
 3. Définir `JWT_SECRET` (long et aléatoire)
-4. Laisser `start` = `node backend/index.js`
+4. Laisser `start` = `node backend/server.js`
+
+### Configuration Railway (Build + Variables liées)
+
+Dans **Railway > Service > Settings**:
+
+- **Build Command**: `npm run railway-run`
+- **Start Command**: `npm run start`
+
+Dans **Railway > Service > Variables**:
+
+- `MYSQL_URL` = `${{MySQL.MYSQL_URL}}`
+- `NODE_ENV` = `production`
+
+Le backend utilisera automatiquement `MYSQL_URL`/`DATABASE_URL` en priorité, avec fallback sécurisé vers les variables `DB_*` si nécessaire.
+
+Fallback automatique pris en charge par le backend:
+
+- Si `DATABASE_URL` pointe vers `mysql.railway.internal`, le backend tente automatiquement de remplacer l'hôte/port via `MYSQL_PUBLIC_HOST`/`MYSQL_PUBLIC_PORT`, `DB_PUBLIC_HOST`/`DB_PUBLIC_PORT` ou `RAILWAY_TCP_PROXY_DOMAIN`.
+- Si aucun host public n'est fourni, l'URL privée est ignorée et le backend bascule vers les variables séparées (`DB_HOST`, `DB_PORT`, etc.).
 
 Important: n'utilise pas `mysql.railway.internal` pour un service qui n'est pas sur le réseau privé Railway, sinon tu auras `getaddrinfo ENOTFOUND mysql.railway.internal`.
 
