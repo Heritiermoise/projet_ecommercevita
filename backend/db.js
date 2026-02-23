@@ -1,5 +1,6 @@
 import mysql from 'mysql2/promise'
 import dotenv from 'dotenv'
+import net from 'node:net'
 
 dotenv.config()
 
@@ -15,14 +16,22 @@ function isRailwayInternal(value) {
   return /railway\.internal/i.test(String(value || ''))
 }
 
+function isRailwayRuntime() {
+  return Boolean(
+    process.env.RAILWAY_ENVIRONMENT
+      || process.env.RAILWAY_PROJECT_ID
+      || process.env.RAILWAY_SERVICE_ID,
+  )
+}
+
 function pickPublicHostFallback() {
   const candidates = [
     'MYSQL_PUBLIC_HOST',
     'DB_PUBLIC_HOST',
-    'RAILWAY_TCP_PROXY_DOMAIN',
-    'RAILWAY_PRIVATE_DOMAIN',
     'MYSQLHOST',
     'MYSQL_HOST',
+    'RAILWAY_TCP_PROXY_DOMAIN',
+    'RAILWAY_PRIVATE_DOMAIN',
     'DB_HOST',
   ]
 
@@ -49,6 +58,9 @@ function normalizeDatabaseUrl(rawUrl) {
 
   try {
     const url = new URL(rawUrl)
+    if (isRailwayInternal(url.hostname) && isRailwayRuntime()) {
+      return rawUrl
+    }
     if (!isRailwayInternal(url.hostname)) return rawUrl
 
     const fallbackHost = pickPublicHostFallback()
@@ -74,7 +86,8 @@ function pickDatabaseUrl() {
 
   for (const key of publicCandidates) {
     const value = process.env[key]
-    if (value && !isRailwayInternal(value)) return value
+    if (!value) continue
+    if (!isRailwayInternal(value) || isRailwayRuntime()) return value
   }
 
   const anyCandidates = ['DATABASE_URL', 'URL_PUBLIC_MYSQL', 'MYSQL_PUBLIC_URL', 'MYSQL_URL', 'MYSQLURL', 'URL_MYSQL', 'MYSQL_PRIVATE_URL']
@@ -97,31 +110,85 @@ const baseConfig = {
 
 let pool
 
+function isLocalHost(value) {
+  const host = String(value || '').trim().toLowerCase()
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1'
+}
+
+function canReachTcpPort(host, port, timeoutMs = 700) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket()
+    let done = false
+
+    const finalize = (result) => {
+      if (done) return
+      done = true
+      socket.destroy()
+      resolve(result)
+    }
+
+    socket.setTimeout(timeoutMs)
+    socket.once('connect', () => finalize(true))
+    socket.once('timeout', () => finalize(false))
+    socket.once('error', () => finalize(false))
+
+    socket.connect(Number(port), host)
+  })
+}
+
+async function resolveLocalDbPort(host, explicitPort) {
+  if (explicitPort) return Number(explicitPort)
+  if (!isLocalHost(host)) return 3306
+
+  const preferredPorts = [3306, 3307]
+  for (const port of preferredPorts) {
+    const reachable = await canReachTcpPort(host, port)
+    if (reachable) {
+      if (port !== 3306) {
+        console.warn(`[DATABASE] Auto-detected local MySQL port ${port} (DB_PORT not set).`)
+      }
+      return port
+    }
+  }
+
+  return 3306
+}
+
 const dbUrlRaw = pickDatabaseUrl()
 const dbUrl = normalizeDatabaseUrl(dbUrlRaw)
 
-if (dbUrl) {
-  console.log('[DATABASE] Connecting via Connection String...')
-  // Check if it's a postgres URL while using mysql2
-  if (dbUrl.startsWith('postgres://')) {
-    console.error('[DATABASE] ERROR: You are using a PostgreSQL URL with a MySQL driver!')
-    console.error('If you moved to Supabase Postgres, you must adapt the backend or use a MySQL compatible DB.')
+async function createPool() {
+  if (dbUrl) {
+    console.log('[DATABASE] Connecting via Connection String...')
+    if (dbUrl.startsWith('postgres://')) {
+      console.error('[DATABASE] ERROR: You are using a PostgreSQL URL with a MySQL driver!')
+      console.error('If you moved to Supabase Postgres, you must adapt the backend or use a MySQL compatible DB.')
+    }
+    return mysql.createPool({
+      uri: dbUrl,
+      ...baseConfig,
+    })
   }
-  pool = mysql.createPool({
-    uri: dbUrl,
-    ...baseConfig,
-  })
-} else {
+
   if (dbUrlRaw && isRailwayInternal(dbUrlRaw)) {
     console.warn('[DATABASE] Ignoring Railway private URL (railway.internal) because it is not resolvable from this runtime.')
     console.warn('[DATABASE] Set MYSQL_PUBLIC_URL / URL_PUBLIC_MYSQL or MYSQL_PUBLIC_HOST + MYSQL_PUBLIC_PORT in your environment.')
   }
 
   const dbHostRaw = getFirstDefinedEnv(['DB_HOST', 'MYSQL_HOST', 'MYSQLHOST'], '')
-  const dbHost = isRailwayInternal(dbHostRaw)
-    ? pickPublicHostFallback() || dbHostRaw
+  let dbHost = isRailwayInternal(dbHostRaw)
+    ? (isRailwayRuntime() ? dbHostRaw : (pickPublicHostFallback() || dbHostRaw))
     : dbHostRaw
-  const dbPort = Number(getFirstDefinedEnv(['DB_PORT', 'MYSQL_PORT', 'MYSQLPORT'], '3306'))
+
+  if (isRailwayRuntime() && isLocalHost(dbHost)) {
+    const preferredRailwayHost = getFirstDefinedEnv(['MYSQLHOST', 'MYSQL_HOST', 'DB_PUBLIC_HOST', 'MYSQL_PUBLIC_HOST'], '')
+    if (preferredRailwayHost && !isLocalHost(preferredRailwayHost)) {
+      console.warn(`[DATABASE] Replacing local host ${dbHost} with Railway host ${preferredRailwayHost}.`)
+      dbHost = preferredRailwayHost
+    }
+  }
+  const dbPortRaw = getFirstDefinedEnv(['DB_PORT', 'MYSQL_PORT', 'MYSQLPORT'], '')
+  const dbPort = await resolveLocalDbPort(dbHost, dbPortRaw)
   const dbUser = getFirstDefinedEnv(['DB_USER', 'MYSQL_USER', 'MYSQLUSER'], 'root')
   const dbPassword = getFirstDefinedEnv(['DB_PASSWORD', 'MYSQL_PASSWORD', 'MYSQLPASSWORD', 'MYSQL_ROOT_PASSWORD'], '')
   const dbName = getFirstDefinedEnv(['DB_NAME', 'MYSQL_DATABASE', 'MYSQLDATABASE'], '')
@@ -136,7 +203,13 @@ if (dbUrl) {
     }
   }
 
-  pool = mysql.createPool({
+  if (isRailwayRuntime() && isLocalHost(dbHost)) {
+    throw new Error(
+      'Railway runtime detected but DB host is local (127.0.0.1/localhost). Set MYSQL_URL or MYSQLHOST/MYSQLPORT from Railway MySQL service variables.',
+    )
+  }
+
+  return mysql.createPool({
     host: dbHost,
     port: dbPort,
     user: dbUser,
@@ -145,6 +218,8 @@ if (dbUrl) {
     ...baseConfig,
   })
 }
+
+pool = await createPool()
 
 const TRANSIENT_DB_ERRORS = new Set([
   'PROTOCOL_CONNECTION_LOST',

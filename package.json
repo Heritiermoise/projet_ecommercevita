@@ -9,9 +9,9 @@
     "start": "node backend/server.js",
     "build": "tsc -b && vite build",
     "railway:install": "node scripts/railway-install.mjs",
-    "railway:build": "npm run build",
+    "railway:build": "npm run railway:install ; npm run build",
     "railway:serve": "node backend/server.js",
-    "railway-run": "npm run railway:install ; npm run railway:build ; npm run railway:serve",
+    "railway-run": "npm run railway:build ; npm run railway:serve",
     "postinstall": "npm run build",
     "lint": "eslint .",
     "preview": "vite preview"
