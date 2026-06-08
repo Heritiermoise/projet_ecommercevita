@@ -116,6 +116,13 @@ export default function Footer() {
                   </Link>
                 </li>
               ) : null}
+              {user?.role === 'admin' ? (
+                <li>
+                  <Link className="hover:text-slate-900" to="/admin/paniers">
+                    Paniers
+                  </Link>
+                </li>
+              ) : null}
             </ul>
           </div>
 

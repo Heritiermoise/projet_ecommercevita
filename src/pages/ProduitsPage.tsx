@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import { apiDelete, apiGet } from '../lib/api'
+import { apiDelete, apiGet, apiPost } from '../lib/api'
 import { addToCart } from '../lib/cart'
 import { normalizeProductImageUrl, PRODUCT_IMAGE_FALLBACK } from '../lib/image'
 import { Pencil, Trash2 } from 'lucide-react'
@@ -114,7 +114,7 @@ export default function ProduitsPage() {
 
   const [quantities, setQuantities] = useState<Record<number, number>>({})
 
-  const onAddToCart = (p: Produit) => {
+  const onAddToCart = async (p: Produit) => {
     if (!user) {
       navigate('/connexion', { state: { from: { pathname: '/produits' } } })
       return
@@ -136,6 +136,16 @@ export default function ProduitsPage() {
       },
       qty,
     )
+
+    try {
+      await apiPost('/api/panier', {
+        produitId: p.id,
+        quantite: qty,
+      })
+    } catch {
+      // fallback localStorage déjà fait
+    }
+
     navigate('/panier')
   }
 

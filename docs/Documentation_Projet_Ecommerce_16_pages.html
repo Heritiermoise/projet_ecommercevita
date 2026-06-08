@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Documentation Projet Ecommerce - 16 pages</title>
+  <style>
+    @page { size: A4; margin: 16mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #0f172a; background: #fff; }
+    .page {
+      min-height: 265mm;
+      display: flex;
+      flex-direction: column;
+      page-break-after: always;
+      border: 1px solid #e2e8f0;
+      padding: 12mm;
+    }
+    .page:last-child { page-break-after: auto; }
+    h1 { margin: 0 0 10px; font-size: 28px; line-height: 1.2; }
+    h2 { margin: 0 0 10px; font-size: 21px; color: #1d4ed8; }
+    h3 { margin: 14px 0 8px; font-size: 16px; color: #0f172a; }
+    p, li { font-size: 12px; line-height: 1.45; }
+    ul { margin: 6px 0 0 18px; padding: 0; }
+    .muted { color: #475569; }
+    .kpi { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-top: 10px; }
+    .card { border: 1px solid #dbeafe; border-radius: 8px; padding: 8px; background: #f8fafc; }
+    .card b { display:block; margin-bottom: 4px; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .badge { display:inline-block; border:1px solid #cbd5e1; border-radius:999px; padding:2px 8px; font-size:11px; margin-right:6px; }
+    .table { width:100%; border-collapse: collapse; margin-top:8px; }
+    .table th, .table td { border:1px solid #e2e8f0; padding:6px; font-size:11px; text-align:left; }
+    .footer { margin-top: auto; padding-top: 10px; font-size: 10px; color: #64748b; border-top:1px dashed #cbd5e1; }
+    .mono { font-family: Consolas, monospace; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+  <section class="page">
+    <h1>Documentation Complète — Projet Ecommerce</h1>
+    <h2>Page 1/16 · Vue d’ensemble et objectifs</h2>
+    <p>Cette documentation décrit en profondeur l’application <b>Projet_ecommerce</b>, sa construction technique, ses modules métier, et son fonctionnement côté <b>client</b> et <b>administrateur</b>. Le document est produit à partir de l’analyse directe du code source frontend + backend.</p>
+    <div class="kpi">
+      <div class="card"><b>Frontend</b>React + TypeScript + Vite</div>
+      <div class="card"><b>Backend</b>Node.js + Express + Zod</div>
+      <div class="card"><b>Base de données</b>MySQL / MariaDB</div>
+      <div class="card"><b>Paiement</b>Airtel, Maisha Pay, WhatsApp, Livraison</div>
+    </div>
+    <h3>But fonctionnel</h3>
+    <ul>
+      <li>Permettre la découverte de produits, la constitution d’un panier, la création de commandes et leur suivi.</li>
+      <li>Offrir un back-office administrateur pour gérer catalogue, catégories, commandes, transactions, utilisateurs, ventes et indicateurs.</li>
+      <li>Intégrer des canaux de paiement hybrides adaptés au contexte local (mobile money et assistance WhatsApp).</li>
+    </ul>
+    <h3>Périmètre couvert</h3>
+    <ul>
+      <li>Architecture technique, routage, sécurité (JWT + rôles), API REST, modèle de données.</li>
+      <li>Parcours client et admin détaillés, logique de stock, notifications, facturation PDF, chatbot.</li>
+      <li>Déploiement Railway, variables d’environnement, exploitation et recommandations production.</li>
+    </ul>
+    <div class="footer">Projet analysé le 23 février 2026 · Page 1/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 2/16 · Architecture globale</h2>
+    <p>L’application suit une architecture <b>SPA + API</b> avec séparation claire entre interface utilisateur et logique métier serveur.</p>
+    <div class="two">
+      <div>
+        <h3>Couche présentation (Client Web)</h3>
+        <ul>
+          <li><span class="badge">React Router</span>Navigation par routes protégées.</li>
+          <li><span class="badge">AuthContext</span>Stockage token + utilisateur.</li>
+          <li><span class="badge">Lib API</span>Appels HTTP avec timeout, headers et gestion d’erreurs.</li>
+          <li><span class="badge">UI</span>Header/Footer/Chatbot + pages métier.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Couche métier (API Express)</h3>
+        <ul>
+          <li>Validation des entrées avec Zod.</li>
+          <li>Contrôle d’accès par middleware JWT et rôles.</li>
+          <li>Transactions SQL pour commandes/paiements.</li>
+          <li>Génération de factures et rapports PDF avec Puppeteer.</li>
+        </ul>
+      </div>
+    </div>
+    <h3>Flux principal</h3>
+    <p class="mono">Navigateur → /api/* (fetch) → Express → MySQL pool → réponse JSON/HTML/PDF</p>
+    <h3>Points de fiabilité</h3>
+    <ul>
+      <li>Pool DB avec retries sur erreurs transitoires.</li>
+      <li>Health endpoints <span class="mono">/api/health</span> et <span class="mono">/api/health/db</span>.</li>
+      <li>Support Railway URL + variables individuelles.</li>
+      <li>Fallback SPA pour servir le build frontend.</li>
+    </ul>
+    <div class="footer">Architecture orientée modules · Page 2/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 3/16 · Frontend: fondations techniques</h2>
+    <h3>Boot applicatif</h3>
+    <ul>
+      <li><b>main.tsx</b> instancie React, BrowserRouter et AuthProvider.</li>
+      <li><b>App.tsx</b> définit toutes les routes et protections d’accès.</li>
+      <li><b>Layout.tsx</b> encapsule Header, Footer, Outlet, Chatbot.</li>
+    </ul>
+    <h3>Gestion de session</h3>
+    <ul>
+      <li>Token JWT stocké dans <span class="mono">localStorage(auth_token)</span>.</li>
+      <li>Utilisateur courant dans <span class="mono">localStorage(auth_user)</span>.</li>
+      <li>AuthContext expose <span class="mono">login/register/logout/refreshMe</span>.</li>
+    </ul>
+    <h3>Routage sécurisé</h3>
+    <table class="table">
+      <tr><th>Guard</th><th>Règle</th><th>Exemples</th></tr>
+      <tr><td>RequireAuth</td><td>Utilisateur connecté</td><td>commandes, notifications</td></tr>
+      <tr><td>RequireAdmin</td><td>Rôle admin</td><td>dashboard, catégories, ventes, utilisateurs</td></tr>
+      <tr><td>RequireClient</td><td>Rôle client</td><td>panier, adresses, paiement</td></tr>
+    </table>
+    <h3>Client HTTP</h3>
+    <ul>
+      <li>Base URL dynamique selon <span class="mono">VITE_API_URL</span> et mode production.</li>
+      <li>Timeout configurable, abort controller, messages d’erreurs contextualisés.</li>
+      <li>Helpers standards: GET, POST, PUT, DELETE.</li>
+    </ul>
+    <div class="footer">Frontend orienté sécurité + UX · Page 3/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 4/16 · Backend: structure et middlewares</h2>
+    <h3>Composants backend</h3>
+    <ul>
+      <li><b>server.js</b> lance l’écoute HTTP.</li>
+      <li><b>index.js</b> contient routes, services et middleware.</li>
+      <li><b>auth.js</b> signature/validation JWT et contrôle de rôle.</li>
+      <li><b>db.js</b> stratégie de connexion DB et résilience.</li>
+    </ul>
+    <h3>Sécurité et contrôle d’accès</h3>
+    <ul>
+      <li>JWT obligatoire pour les routes sensibles.</li>
+      <li>Roles stricts: <span class="mono">client</span> / <span class="mono">admin</span>.</li>
+      <li>Protection contre actions interdites (ex: suppression de son propre compte admin).</li>
+    </ul>
+    <h3>Middlewares et robustesse</h3>
+    <ul>
+      <li>Parser JSON avec gestion explicite des JSON invalides.</li>
+      <li>CORS multi-origines paramétrable via variable d’environnement.</li>
+      <li>Logger API pour traçabilité des requêtes.</li>
+      <li>SMTP vérifié au démarrage avec retry.</li>
+    </ul>
+    <h3>Services internes</h3>
+    <ul>
+      <li>Envoi facture (email + trace notification WhatsApp).</li>
+      <li>Services paiement (Maisha Pay / Airtel Money).</li>
+      <li>Génération PDF facture et rapport commandes.</li>
+    </ul>
+    <div class="footer">API robuste orientée opérations · Page 4/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 5/16 · Modèle de données (MySQL)</h2>
+    <p>Le socle SQL couvre le cycle complet e-commerce: catalogue, panier, commande, paiement, ventes, CRM et analytics.</p>
+    <table class="table">
+      <tr><th>Domaine</th><th>Tables principales</th><th>Rôle métier</th></tr>
+      <tr><td>Identité</td><td>utilisateurs, adresses</td><td>Profils, rôles, coordonnées, livraison/facturation</td></tr>
+      <tr><td>Catalogue</td><td>produits, categories, bannieres, historique_prix</td><td>Offre marchande, merchandising, audit des prix</td></tr>
+      <tr><td>Achat</td><td>paniers, panier_articles, commandes, commande_details</td><td>Panier et conversion en commande</td></tr>
+      <tr><td>Paiement</td><td>transactions_paiement</td><td>Traçage des transactions externes</td></tr>
+      <tr><td>Exploitation</td><td>notifications, ventes, visites, avis</td><td>Suivi, alertes, BI, qualité perçue</td></tr>
+    </table>
+    <h3>Principes relationnels</h3>
+    <ul>
+      <li>Une commande possède plusieurs lignes de détail.</li>
+      <li>Une vente est corrélée à une commande validée.</li>
+      <li>Les changements de prix sont historisés.</li>
+      <li>Les notifications matérialisent les événements opérationnels.</li>
+    </ul>
+    <h3>Intégrité métier</h3>
+    <ul>
+      <li>Contrôles de stock avant création de commande.</li>
+      <li>Restauration stock sur annulation de livraison.</li>
+      <li>Idempotence partielle sur création vente/transaction.</li>
+    </ul>
+    <div class="footer">Base orientée transaction + audit · Page 5/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 6/16 · Authentification, autorisation et sécurité</h2>
+    <h3>Inscription / connexion</h3>
+    <ul>
+      <li>Inscription: validation email + mot de passe, hash bcrypt côté API.</li>
+      <li>Connexion: vérification identifiants puis émission token JWT 7 jours.</li>
+      <li>Route <span class="mono">/api/me</span>: récupération profil courant.</li>
+    </ul>
+    <h3>Rôles et séparation des responsabilités</h3>
+    <div class="two">
+      <div>
+        <h3>Client</h3>
+        <ul>
+          <li>Consulte produits/catégories/avis.</li>
+          <li>Gère panier local et adresses.</li>
+          <li>Passe commande et initie paiement.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Admin</h3>
+        <ul>
+          <li>Gère catalogue et catégories.</li>
+          <li>Valide paiements/livraisons.</li>
+          <li>Pilote ventes, utilisateurs, transactions et KPI.</li>
+        </ul>
+      </div>
+    </div>
+    <h3>Mesures de sécurité</h3>
+    <ul>
+      <li>Endpoints critiques protégés par double middleware auth + rôle.</li>
+      <li>Validation stricte des payloads par Zod.</li>
+      <li>Normalisation des URL d’images pour réduire les entrées invalides.</li>
+      <li>Aucun stockage de PIN Airtel durable côté front.</li>
+    </ul>
+    <div class="footer">Sécurité par conception applicative · Page 6/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 7/16 · Parcours Client détaillé</h2>
+    <h3>1) Découverte et recherche produit</h3>
+    <ul>
+      <li>Filtres: catégorie, recherche textuelle, intervalle de prix, tri.</li>
+      <li>Affichage stock faible, images normalisées + fallback.</li>
+    </ul>
+    <h3>2) Panier</h3>
+    <ul>
+      <li>Stockage local <span class="mono">cart_v1</span> (localStorage).</li>
+      <li>Actions: ajouter, modifier quantité, retirer, vider panier.</li>
+      <li>Calcul sous-total/total côté client.</li>
+    </ul>
+    <h3>3) Checkout et paiement</h3>
+    <ul>
+      <li>Modes: Maisha Pay, Airtel, WhatsApp, livraison.</li>
+      <li>Création commande + détails via API unique d’initiation.</li>
+      <li>Si Airtel: phase éventuelle de validation PIN.</li>
+      <li>Si WhatsApp: redirection vers conversation préremplie.</li>
+    </ul>
+    <h3>4) Post-achat</h3>
+    <ul>
+      <li>Consultation commandes et détails article par article.</li>
+      <li>Accès facture HTML/PDF et partage.</li>
+      <li>Ajout d’avis et gestion d’adresses.</li>
+    </ul>
+    <div class="footer">Expérience client complète de bout en bout · Page 7/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 8/16 · Parcours Administrateur détaillé</h2>
+    <h3>Dashboard stratégique</h3>
+    <ul>
+      <li>Ventes 60 jours et ventes globales.</li>
+      <li>Clients connectés selon fenêtre d’activité.</li>
+      <li>Distribution produits par catégorie.</li>
+      <li>Histogramme visites par heure (24h).</li>
+    </ul>
+    <h3>Pilotage opérationnel</h3>
+    <ul>
+      <li>Validation paiement commande (passage à payé).</li>
+      <li>Marquage livraison livrée/annulée avec effets de stock.</li>
+      <li>Consultation des transactions financières.</li>
+      <li>Gestion des rôles utilisateurs et suppression contrôlée.</li>
+    </ul>
+    <h3>Production documentaire</h3>
+    <ul>
+      <li>Rapport PDF global des commandes.</li>
+      <li>Factures PDF individuelles avec QR code.</li>
+    </ul>
+    <h3>Back-office catalogue</h3>
+    <ul>
+      <li>CRUD produits et catégories.</li>
+      <li>Bannières promotionnelles.</li>
+      <li>Historique des changements de prix.</li>
+    </ul>
+    <div class="footer">Admin orienté supervision + exécution · Page 8/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 9/16 · Catalogue, stock et contenus</h2>
+    <h3>Produits</h3>
+    <ul>
+      <li>Champs métier: nom, prix, stock, marque, catégorie, image, description.</li>
+      <li>Création: détection de doublon logique et consolidation du stock.</li>
+      <li>Mise à jour: insertion dans historique_prix si changement tarifaire.</li>
+      <li>Suppression: endpoint admin dédié.</li>
+    </ul>
+    <h3>Catégories</h3>
+    <ul>
+      <li>Gestion admin complète (ajout, modification, suppression).</li>
+      <li>Statut actif exploitable pour filtrer la publication.</li>
+    </ul>
+    <h3>Bannières</h3>
+    <ul>
+      <li>Création admin avec image validée et lien optionnel.</li>
+      <li>Activation/désactivation via attribut booléen.</li>
+    </ul>
+    <h3>Gestion des images</h3>
+    <ul>
+      <li>Formats acceptés: URL HTTP(S), chemin /media, data:image base64.</li>
+      <li>Normalisation front + back pour cohérence.</li>
+      <li>Fallback visuel pour éviter les blocs cassés.</li>
+    </ul>
+    <div class="footer">Catalogue structuré et maintenable · Page 9/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 10/16 · Paiements et orchestration transactionnelle</h2>
+    <h3>Pipeline de paiement unifié</h3>
+    <p>La route <span class="mono">POST /api/paiements/initier</span> centralise la création de commande et la logique de branchement selon la méthode choisie.</p>
+    <table class="table">
+      <tr><th>Méthode</th><th>Comportement</th><th>Sortie</th></tr>
+      <tr><td>Maisha Pay</td><td>Appel API externe + enregistrement transaction en attente</td><td>paymentUrl</td></tr>
+      <tr><td>Airtel</td><td>Push USSD simulé/initié + suivi PIN</td><td>pending_pin</td></tr>
+      <tr><td>WhatsApp</td><td>Commande créée + URL wa.me préremplie</td><td>whatsappUrl</td></tr>
+      <tr><td>Livraison</td><td>Commande en attente de validation manuelle</td><td>success</td></tr>
+    </table>
+    <h3>Garanties métier</h3>
+    <ul>
+      <li>Transaction SQL lors de création commande/détails.</li>
+      <li>Contrôle stock article par article avant validation.</li>
+      <li>Nettoyage panier DB utilisateur après transformation en commande.</li>
+      <li>Création vente uniquement quand paiement validé.</li>
+    </ul>
+    <h3>Webhook Maisha Pay</h3>
+    <ul>
+      <li>Mise à jour statut commande.</li>
+      <li>Mise à jour transaction_paiement.</li>
+      <li>Déclenchement facture et notification.</li>
+    </ul>
+    <div class="footer">Paiement hybride et contrôlé · Page 10/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 11/16 · Commandes, livraison, factures et ventes</h2>
+    <h3>Cycle de vie commande</h3>
+    <ul>
+      <li><b>en_attente</b> → <b>paye</b> (validation paiement).</li>
+      <li><b>traitement</b> → <b>expedie</b> → <b>livre</b> (logistique).</li>
+      <li><b>annule</b> possible avec restauration de stock.</li>
+    </ul>
+    <h3>Règles critiques</h3>
+    <ul>
+      <li>Passage à payé déclenche création vente (idempotente).</li>
+      <li>Livré peut archiver/supprimer la commande active selon logique implémentée.</li>
+      <li>Échec paiement et annulation créent des notifications opérationnelles.</li>
+    </ul>
+    <h3>Facturation</h3>
+    <ul>
+      <li>Facture HTML consultable par référence commande.</li>
+      <li>Export PDF via Puppeteer (A4, impression propre).</li>
+      <li>QR code intégré pointant vers URL facture en ligne.</li>
+    </ul>
+    <h3>Rapport global PDF</h3>
+    <ul>
+      <li>Accessible admin, synthétise total commandes, CA, livraisons.</li>
+      <li>Liste détaillée des commandes pour audit.</li>
+    </ul>
+    <div class="footer">Gestion transactionnelle et documentaire · Page 11/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 12/16 · Notifications, chatbot et communication</h2>
+    <h3>Notifications</h3>
+    <ul>
+      <li>Événements alimentés côté backend (paiement, panier, livraison, erreurs, WhatsApp).</li>
+      <li>Affichage frontend avec marquage lu/non-lu.</li>
+      <li>Badge dynamique dans l’entête.</li>
+    </ul>
+    <h3>Chatbot</h3>
+    <ul>
+      <li>Interface flottante persistante sur toutes les pages via Layout.</li>
+      <li>Backend analyse message et répond selon règles métier:</li>
+      <li>Recherche produits, listing catégories, suivi commande par référence CMD-XXX.</li>
+      <li>Réponses institutionnelles et fallback intelligent.</li>
+    </ul>
+    <h3>Canaux externes</h3>
+    <ul>
+      <li>WhatsApp support dans Header/Footer/Panier/Paiement.</li>
+      <li>Email SMTP pour envoi des factures.</li>
+      <li>Partage de facture via lien instantané.</li>
+    </ul>
+    <h3>Observabilité utilisateur</h3>
+    <ul>
+      <li>Traçage des visites (IP + route) consultable côté admin.</li>
+      <li>Historique prix et avis pour pilotage qualité.</li>
+    </ul>
+    <div class="footer">Communication client enrichie · Page 12/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 13/16 · Qualité logicielle et résilience</h2>
+    <h3>Validation et robustesse</h3>
+    <ul>
+      <li>Schémas Zod pour entrées API sensibles.</li>
+      <li>Gestion d’erreurs explicites sur toutes les routes majeures.</li>
+      <li>Retry SQL sur erreurs transitoires (ETIMEDOUT, ECONNRESET...).</li>
+    </ul>
+    <h3>Résilience réseau</h3>
+    <ul>
+      <li>Configuration DNS améliorée pour éviter les timeouts Node/Windows.</li>
+      <li>SMTP vérifié et reconnecté avec stratégie de tentatives.</li>
+      <li>Timeout frontend configurable pour fetch API.</li>
+    </ul>
+    <h3>Consistance des médias</h3>
+    <ul>
+      <li>Normalisation image centralisée front/back.</li>
+      <li>Support local upload converti pour portabilité en ligne.</li>
+      <li>Fallback visuel universel.</li>
+    </ul>
+    <h3>Limites actuelles identifiées</h3>
+    <ul>
+      <li>Panier majoritairement localStorage côté front (complété par API panier côté backend).</li>
+      <li>Certaines routes notifications (unread-count / mark-as-read) dépendent d’implémentation complète backend.</li>
+      <li>Multiplicité des modes paiement nécessite supervision opérationnelle stricte.</li>
+    </ul>
+    <div class="footer">Fiabilité et points d’attention · Page 13/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 14/16 · Déploiement Railway (production)</h2>
+    <h3>Pipeline</h3>
+    <ul>
+      <li>Build: <span class="mono">npm run railway:build</span></li>
+      <li>Start: <span class="mono">npm run start</span> (node backend/server.js)</li>
+      <li>Healthcheck: <span class="mono">/api/health</span></li>
+    </ul>
+    <h3>Variables recommandées</h3>
+    <table class="table">
+      <tr><th>Variable</th><th>Exemple</th><th>Usage</th></tr>
+      <tr><td>JWT_SECRET</td><td>long secret</td><td>Signature JWT</td></tr>
+      <tr><td>MYSQL_URL</td><td>${{MySQL.MYSQL_URL}}</td><td>Connexion DB prioritaire</td></tr>
+      <tr><td>CORS_ORIGIN</td><td>https://ton-domaine</td><td>Politique CORS</td></tr>
+      <tr><td>DB_SSL</td><td>true/false</td><td>TLS DB selon provider</td></tr>
+      <tr><td>NODE_ENV</td><td>production</td><td>Mode runtime</td></tr>
+    </table>
+    <h3>Correctif production appliqué</h3>
+    <ul>
+      <li>Détection runtime Railway et gestion correcte des hôtes <span class="mono">railway.internal</span>.</li>
+      <li>Blocage du fallback localhost en production cloud.</li>
+      <li>Message d’erreur explicite si host DB local détecté sur Railway.</li>
+    </ul>
+    <h3>Checklist go-live</h3>
+    <ul>
+      <li>Tester <span class="mono">/api/health/db</span> après déploiement.</li>
+      <li>Vérifier CORS et URL frontend.</li>
+      <li>Valider paiement sandbox avant mode réel.</li>
+    </ul>
+    <div class="footer">Guide production Railway · Page 14/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 15/16 · Cartographie API (résumé opérationnel)</h2>
+    <h3>Endpoints principaux</h3>
+    <table class="table">
+      <tr><th>Domaine</th><th>Routes clés</th></tr>
+      <tr><td>Health</td><td>/api/health, /api/health/db, /api/stats</td></tr>
+      <tr><td>Auth</td><td>/api/auth/register, /api/auth/login, /api/me</td></tr>
+      <tr><td>Catalogue</td><td>/api/categories, /api/produits, /api/bannieres, /api/historique-prix</td></tr>
+      <tr><td>Achat</td><td>/api/panier, /api/commandes, /api/commandes/:id/details</td></tr>
+      <tr><td>Paiement</td><td>/api/paiements/initier, /api/paiements/valider-pin, /api/paiements/maishapay/callback</td></tr>
+      <tr><td>Admin</td><td>/api/admin/dashboard, /api/admin/transactions, /api/admin/ventes, /api/admin/utilisateurs</td></tr>
+      <tr><td>Service</td><td>/api/chatbot, /api/factures/:reference, /api/admin/rapport-commandes/pdf</td></tr>
+    </table>
+    <h3>Convention de sécurité API</h3>
+    <ul>
+      <li>Public: consultation générale (produits, categories, avis, bannieres, health).</li>
+      <li>Client: panier, adresses, paiements, commandes personnelles.</li>
+      <li>Admin: gouvernance complète (stocks, utilisateurs, statuts, reporting).</li>
+    </ul>
+    <h3>Codes de statut usuels</h3>
+    <ul>
+      <li>200/201: succès opérationnel.</li>
+      <li>400: erreur de validation ou payload invalide.</li>
+      <li>401/403: authentification ou droits insuffisants.</li>
+      <li>404: ressource absente.</li>
+      <li>500: erreur interne / intégration externe indisponible.</li>
+    </ul>
+    <div class="footer">Vue API pour exploitation et QA · Page 15/16</div>
+  </section>
+
+  <section class="page">
+    <h2>Page 16/16 · Exploitation, tests et feuille de route</h2>
+    <h3>Procédures d’exploitation</h3>
+    <ul>
+      <li>Démarrage local: frontend + API via scripts npm.</li>
+      <li>Surveillance: health endpoints, logs paiement, logs notifications.</li>
+      <li>Backup DB recommandé avant opérations massives admin.</li>
+    </ul>
+    <h3>Tests recommandés</h3>
+    <ul>
+      <li>Tests fonctionnels bout-en-bout: inscription → panier → paiement → facture.</li>
+      <li>Tests de rôle: blocages admin/client selon route.</li>
+      <li>Tests de non-régression sur stock et transitions commande.</li>
+      <li>Tests d’intégration Maisha/Airtel en sandbox.</li>
+    </ul>
+    <h3>Améliorations prioritaires</h3>
+    <ul>
+      <li>Unifier pleinement panier front et panier SQL backend.</li>
+      <li>Compléter endpoints notifications pour unread-count/mark-as-read.</li>
+      <li>Introduire pagination serveur sur gros volumes (produits, ventes, commandes).</li>
+      <li>Ajouter journal d’audit admin (qui a changé quoi et quand).</li>
+    </ul>
+    <h3>Conclusion</h3>
+    <p>L’application est déjà structurée pour un usage réel avec une base technique solide. Les modules client et admin sont clairement séparés, les flux critiques sont transactionnels, et les canaux de paiement/communication sont adaptés à un contexte e-commerce moderne.</p>
+    <div class="footer">Fin du document · Documentation technique approfondie · Page 16/16</div>
+  </section>
+
+</body>
+</html>

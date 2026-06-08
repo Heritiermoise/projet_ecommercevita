@@ -3,6 +3,7 @@ import cors from 'cors'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import dotenv from 'dotenv'
+import fs from 'node:fs/promises'
 import { z } from 'zod'
 import { pool, testDbConnection } from './db.js'
 import bcrypt from 'bcryptjs'
@@ -26,8 +27,260 @@ dns.setServers(['8.8.8.8', '8.8.4.4']) // Utilise les DNS de Google pour plus de
 dotenv.config()
 
 const BASE_URL = process.env.APP_URL || 'http://localhost:3001'
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY?.trim() || ''
+const GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash'
+const PROJECT_ROOT = path.resolve(__dirname, '..')
+const PROJECT_SEARCH_DIRS = ['src', 'backend', 'docs', 'public', 'scripts']
+const PROJECT_SEARCH_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.json', '.md', '.html', '.css', '.mjs', '.sql', '.txt', '.toml', '.ini'])
+const PROJECT_IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.vite'])
+const PROJECT_MAX_FILES = 80
+const PROJECT_MAX_SNIPPETS = 6
+const PROJECT_MAX_FILE_SIZE = 250000
+const PROJECT_STOPWORDS = new Set([
+  'avec', 'dans', 'des', 'du', 'les', 'une', 'the', 'and', 'pour', 'sur', 'que', 'qui', 'quoi', 'comment',
+  'est', 'sont', 'avoir', 'faire', 'pas', 'plus', 'moins', 'this', 'that', 'what', 'how', 'why', 'when', 'where',
+  'chez', 'vers', 'par', 'mon', 'ton', 'son', 'nos', 'vos', 'leurs', 'tes', 'ces', 'cet', 'cette',
+])
+
+function normalizeQuestionTerms(message) {
+  return [...new Set(
+    String(message || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .split(/[^a-z0-9]+/g)
+      .map((term) => term.trim())
+      .filter((term) => term.length >= 3 && !PROJECT_STOPWORDS.has(term))
+      .slice(0, 8)
+  )]
+}
+
+function formatRelativeProjectPath(filePath) {
+  return path.relative(PROJECT_ROOT, filePath).split(path.sep).join('/')
+}
+
+function extractSnippetLines(lines, lineIndex) {
+  const start = Math.max(0, lineIndex - 2)
+  const end = Math.min(lines.length, lineIndex + 3)
+  return lines.slice(start, end).join('\n').trim()
+}
+
+async function collectProjectContext(message) {
+  const terms = normalizeQuestionTerms(message)
+  if (terms.length === 0) return []
+
+  const matches = []
+  let scannedFiles = 0
+
+  async function scanFile(filePath) {
+    if (matches.length >= PROJECT_MAX_SNIPPETS || scannedFiles >= PROJECT_MAX_FILES) return
+
+    const ext = path.extname(filePath).toLowerCase()
+    if (!PROJECT_SEARCH_EXTS.has(ext)) return
+
+    let stat
+    try {
+      stat = await fs.stat(filePath)
+    } catch {
+      return
+    }
+
+    if (!stat.isFile() || stat.size > PROJECT_MAX_FILE_SIZE) return
+
+    let content
+    try {
+      content = await fs.readFile(filePath, 'utf8')
+    } catch {
+      return
+    }
+
+    scannedFiles += 1
+    const lowerContent = content.toLowerCase()
+    const score = terms.reduce((total, term) => total + (lowerContent.includes(term) ? 1 : 0), 0)
+    if (score === 0) return
+
+    const lines = content.split(/\r?\n/)
+    const snippets = []
+    for (let index = 0; index < lines.length && snippets.length < 2; index += 1) {
+      const line = lines[index].toLowerCase()
+      if (terms.some((term) => line.includes(term))) {
+        snippets.push(extractSnippetLines(lines, index))
+      }
+    }
+
+    if (snippets.length === 0) return
+
+    matches.push({
+      path: formatRelativeProjectPath(filePath),
+      snippets,
+      score,
+    })
+  }
+
+  async function walkDirectory(directoryPath) {
+    if (matches.length >= PROJECT_MAX_SNIPPETS || scannedFiles >= PROJECT_MAX_FILES) return
+
+    let entries
+    try {
+      entries = await fs.readdir(directoryPath, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    for (const entry of entries) {
+      if (matches.length >= PROJECT_MAX_SNIPPETS || scannedFiles >= PROJECT_MAX_FILES) break
+
+      const fullPath = path.join(directoryPath, entry.name)
+      if (entry.isDirectory()) {
+        if (PROJECT_IGNORE_DIRS.has(entry.name)) continue
+        await walkDirectory(fullPath)
+        continue
+      }
+
+      if (entry.isFile()) {
+        await scanFile(fullPath)
+      }
+    }
+  }
+
+  for (const relativeDir of PROJECT_SEARCH_DIRS) {
+    if (matches.length >= PROJECT_MAX_SNIPPETS || scannedFiles >= PROJECT_MAX_FILES) break
+    await walkDirectory(path.join(PROJECT_ROOT, relativeDir))
+  }
+
+  return matches.sort((left, right) => right.score - left.score)
+}
+
+function formatProjectContext(matches) {
+  if (matches.length === 0) return ''
+
+  return matches.map((match) => {
+    const snippets = match.snippets.map((snippet) => `- ${snippet.replace(/\n+/g, '\n  ')}`).join('\n')
+    return `Fichier: ${match.path}\n${snippets}`
+  }).join('\n\n')
+}
+
+function isGreetingMessage(message) {
+  const msg = String(message || '').toLowerCase().trim()
+  return /^(salut|bonjour|hello|hi|coucou|yo|bonsoir|hey)(\b|[!.,?\s]*)/.test(msg)
+    || msg === 'ca va'
+    || msg === 'ça va'
+    || msg.includes('comment ca va')
+    || msg.includes('comment ça va')
+}
+
+function isThanksMessage(message) {
+  const msg = String(message || '').toLowerCase()
+  return msg.includes('merci') || msg.includes('thanks') || msg.includes('remercie')
+}
+
+function isGoodbyeMessage(message) {
+  const msg = String(message || '').toLowerCase()
+  return msg.includes('au revoir') || msg.includes('bye') || msg.includes('à plus') || msg.includes('a plus') || msg.includes('bonne nuit')
+}
+
+function isProjectOrProductQuestion(message) {
+  const msg = String(message || '').toLowerCase()
+  return [
+    'projet', 'code', 'backend', 'frontend', 'route', 'api', 'assistant', 'chatbot', 'produit', 'commande',
+    'paiement', 'panier', 'categorie', 'utilisateur', 'adresses', 'visites', 'notifications', 'bannieres',
+    'prix', 'stock', 'connexion', 'auth', 'supabase', 'mysql', 'gemini', 'README',
+  ].some((term) => msg.includes(term.toLowerCase()))
+}
+
+async function askGemini(message, projectContext = '') {
+  if (!GEMINI_API_KEY) return null
+
+  const systemInstruction = [
+    'Tu es l\'assistant officiel du projet e-commerce Maisha Shop.',
+    'Réponds toujours en français, de manière professionnelle, claire et concrète.',
+    'Si un contexte projet est fourni, base ta réponse prioritairement dessus et n\'invente rien.',
+    'Si l\'information n\'est pas présente dans le contexte projet, dis-le explicitement et propose une piste utile.',
+    'Pour une question générale ou externe, réponds normalement avec une réponse courte mais correcte.',
+  ].join(' ')
+
+  const userPrompt = projectContext
+    ? `Question utilisateur:\n${message}\n\nContexte extrait du projet:\n${projectContext}`
+    : `Question utilisateur:\n${message}`
+
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: systemInstruction }],
+      },
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: userPrompt }],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.4,
+        topP: 0.95,
+        maxOutputTokens: 512,
+      },
+    }),
+  })
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => '')
+    throw new Error(`Gemini API error (${response.status}): ${details}`)
+  }
+
+  const data = await response.json()
+  const reply = data?.candidates?.[0]?.content?.parts
+    ?.map((part) => part?.text || '')
+    .join('')
+    .trim()
+
+  return reply || null
+}
+
+function fallbackChatbotReply(message) {
+  const msg = String(message || '').toLowerCase()
+
+  if (isGreetingMessage(msg)) {
+    return 'Salut ! Je vais bien, merci. Comment puis-je vous aider sur le projet ou sur une question externe ?'
+  }
+
+  if (isThanksMessage(msg)) {
+    return 'Avec plaisir. Si vous voulez, je peux aussi fouiller dans le projet pour trouver la réponse exacte.'
+  }
+
+  if (isGoodbyeMessage(msg)) {
+    return 'À bientôt. Revenez quand vous voulez, je serai là pour le projet comme pour les autres questions.'
+  }
+
+  if (msg.includes('aide')) {
+    return "Je peux vous aider à :\n1. Trouver un produit 🔍\n2. Suivre une commande 📦\n3. Comprendre les modes de paiement 💳\n4. Contacter un humain 👨‍💼"
+  }
+
+  if (msg.includes('paiement')) {
+    return "💳 Nous acceptons :\n- Airtel Money\n- Maisha Pay (Cartes & Mobile)\n- Cash à la livraison (sous conditions)"
+  }
+
+  if (msg.includes('contact')) {
+    return 'Vous pouvez nous joindre par WhatsApp au +243 000 000 000 ou par email à support@maishashop.com'
+  }
+
+  if (msg.includes('qui') || msg.includes('quoi') || msg.includes('maisha') || msg.includes('entreprise')) {
+    return "Maisha Shop est la plateforme e-commerce du projet. Nous proposons une expérience d'achat, de paiement et de suivi de commande organisée autour du catalogue, de l'administration et du support client."
+  }
+
+  return "Je n'ai pas trouvé de réponse exacte dans ma base locale. Donnez-moi plus de détails sur le produit, la commande ou le module concerné, et je chercherai dans le projet."
+}
 
 const app = express()
+app.use(cors({
+  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}))
 app.use(express.json())
 
 app.use((err, _req, res, next) => {
@@ -79,29 +332,54 @@ verifySMTP();
 /**
  * Envoie une facture professionnelle par Email et simule l'envoi WhatsApp
  */
-async function sendInvoice(commandeId) {
+async function sendInvoice(commandeId, reference = null) {
   try {
-    // 1. Récupérer les données complètes
-    const [[commande]] = await pool.query(
-      `SELECT c.*, u.email, u.nom, u.prenom, u.telephone
-       FROM commandes c
-       JOIN utilisateurs u ON c.utilisateur_id = u.id
-       WHERE c.id = :id`,
-      { id: commandeId }
-    )
+    // 1. Récupérer les données (soit par ID soit par Référence si archivée)
+    let query = `
+      SELECT c.*, u.email, u.nom, u.prenom, u.telephone
+      FROM commandes c
+      JOIN utilisateurs u ON c.utilisateur_id = u.id
+      WHERE c.id = :id
+    `;
+    let params = { id: commandeId };
+
+    if (!commandeId && reference) {
+      query = `
+        SELECT v.id, v.reference, v.montant as montant_total, v.date_vente as date_commande, 
+               u.email, u.nom, u.prenom, u.telephone
+        FROM ventes v
+        JOIN utilisateurs u ON v.utilisateur_id = u.id
+        WHERE v.reference = :ref
+      `;
+      params = { ref: reference };
+    }
+
+    const [[commande]] = await pool.query(query, params)
 
     if (!commande) {
-      console.warn(`[SEND INVOICE] Commande ID ${commandeId} introuvable.`)
+      console.warn(`[SEND INVOICE] Commande/Vente introuvable (ID: ${commandeId}, Ref: ${reference}).`)
       return
     }
 
-    const [details] = await pool.query(
-      `SELECT cd.*, p.nom as produitNom
-       FROM commande_details cd
-       JOIN produits p ON cd.produit_id = p.id
-       WHERE cd.commande_id = :id`,
-      { id: commandeId }
-    )
+    // 2. Récupérer les détails (soit commande_details soit vente_details)
+    let detailQuery = `
+      SELECT cd.*, p.nom as produitNom
+      FROM commande_details cd
+      JOIN produits p ON cd.produit_id = p.id
+      WHERE cd.commande_id = :id
+    `;
+    let detailParams = { id: commande.id };
+
+    if (!commandeId && reference) {
+      detailQuery = `
+        SELECT vd.*, p.nom as produitNom
+        FROM vente_details vd
+        JOIN produits p ON vd.produit_id = p.id
+        WHERE vd.vente_id = :id
+      `;
+    }
+
+    const [details] = await pool.query(detailQuery, detailParams)
 
     const dateStr = new Date(commande.date_commande).toLocaleDateString('fr-FR')
     const itemsHtml = details.map(d => `
@@ -683,8 +961,22 @@ function sanitizeProductImageUrl(value) {
 
   normalized = normalized.replace(/^['"]+|['"]+$/g, '')
   normalized = normalized.replace(/\\+/g, '/')
+  normalized = normalized.replace(/\s+/g, ' ').trim()
 
   if (!normalized) return null
+
+  const lowerNormalized = normalized.toLowerCase()
+  const mediaIndex = lowerNormalized.indexOf('/media/')
+  if (mediaIndex >= 0) {
+    const mediaPath = normalized.slice(mediaIndex)
+    return encodeURI(mediaPath)
+  }
+
+  const publicIndex = lowerNormalized.indexOf('/public/')
+  if (publicIndex >= 0) {
+    const afterPublic = normalized.slice(publicIndex + '/public'.length)
+    return encodeURI(afterPublic.startsWith('/') ? afterPublic : `/${afterPublic}`)
+  }
 
   if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(normalized)) {
     return normalized
@@ -712,9 +1004,9 @@ function sanitizeProductImageUrl(value) {
     normalized = normalized.replace(/^[A-Za-z]:\//, '/')
   }
 
-  if (normalized.startsWith('/')) return normalized
+  if (normalized.startsWith('/')) return encodeURI(normalized)
 
-  if (normalized.includes('/')) return `/${normalized.replace(/^\/+/, '')}`
+  if (normalized.includes('/')) return encodeURI(`/${normalized.replace(/^\/+/, '')}`)
 
   return null
 }
@@ -923,6 +1215,52 @@ const cartSchema = z.object({
   quantite: z.number().int().min(1)
 })
 
+const updateCartSchema = z.object({
+  quantite: z.number().int().min(1),
+})
+
+async function getOrCreatePanierId(userId) {
+  const [[panier]] = await pool.query(
+    'SELECT id FROM paniers WHERE utilisateur_id = :userId LIMIT 1',
+    { userId },
+  )
+
+  if (panier?.id) return panier.id
+
+  const [result] = await pool.query('INSERT INTO paniers (utilisateur_id) VALUES (:userId)', {
+    userId,
+  })
+  return result.insertId
+}
+
+app.get('/api/panier', requireAuth, requireRole('client'), async (req, res) => {
+  const userId = req.user.id
+  try {
+    const [[panier]] = await pool.query('SELECT id FROM paniers WHERE utilisateur_id = :userId LIMIT 1', {
+      userId,
+    })
+
+    if (!panier?.id) {
+      return res.json({ items: [] })
+    }
+
+    const [rows] = await pool.query(
+      `SELECT pa.id, pa.panier_id as panierId, pa.produit_id as produitId, pa.quantite,
+              p.nom as produitNom, p.prix as prixUnitaire, p.image_principale as imagePrincipale,
+              p.stock_quantite as stockQuantite
+       FROM panier_articles pa
+       JOIN produits p ON p.id = pa.produit_id
+       WHERE pa.panier_id = :panierId
+       ORDER BY pa.id DESC`,
+      { panierId: panier.id },
+    )
+
+    res.json({ items: rows })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
 app.post('/api/panier', requireAuth, requireRole('client'), async (req, res) => {
   const parsed = cartSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json(parsed.error)
@@ -941,15 +1279,7 @@ app.post('/api/panier', requireAuth, requireRole('client'), async (req, res) => 
       return res.status(400).json({ error: `Stock insuffisant (${produit.stock_quantite} dispos)` })
     }
 
-    const [[panier]] = await pool.query(
-      'SELECT id FROM paniers WHERE utilisateur_id = :userId LIMIT 1',
-      { userId }
-    )
-    let panierId = panier?.id
-    if (!panierId) {
-      const [res] = await pool.query('INSERT INTO paniers (utilisateur_id) VALUES (:userId)', { userId })
-      panierId = res.insertId
-    }
+    const panierId = await getOrCreatePanierId(userId)
 
     await pool.query(`
       INSERT INTO panier_articles (panier_id, produit_id, quantite)
@@ -964,6 +1294,88 @@ app.post('/api/panier', requireAuth, requireRole('client'), async (req, res) => 
     )
 
     res.json({ success: true, message: "Ajouté avec succès ($)" })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+app.put('/api/panier/:produitId', requireAuth, requireRole('client'), async (req, res) => {
+  const produitId = Number(req.params.produitId)
+  const parsed = updateCartSchema.safeParse(req.body)
+  if (!Number.isFinite(produitId)) return res.status(400).json({ error: 'produitId invalide' })
+  if (!parsed.success) return res.status(400).json(parsed.error)
+
+  const userId = req.user.id
+  const { quantite } = parsed.data
+
+  try {
+    const [[produit]] = await pool.query('SELECT stock_quantite FROM produits WHERE id = :id', { id: produitId })
+    if (!produit) return res.status(404).json({ error: 'Produit introuvable' })
+    if (produit.stock_quantite < quantite) {
+      return res.status(400).json({ error: `Stock insuffisant (${produit.stock_quantite} dispos)` })
+    }
+
+    const [[panier]] = await pool.query('SELECT id FROM paniers WHERE utilisateur_id = :userId LIMIT 1', {
+      userId,
+    })
+    if (!panier?.id) return res.status(404).json({ error: 'Panier introuvable' })
+
+    const [result] = await pool.query(
+      `UPDATE panier_articles
+       SET quantite = :quantite
+       WHERE panier_id = :panierId AND produit_id = :produitId`,
+      { panierId: panier.id, produitId, quantite },
+    )
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ error: 'Article panier introuvable' })
+    }
+
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+app.delete('/api/panier/:produitId', requireAuth, requireRole('client'), async (req, res) => {
+  const produitId = Number(req.params.produitId)
+  if (!Number.isFinite(produitId)) return res.status(400).json({ error: 'produitId invalide' })
+
+  const userId = req.user.id
+  try {
+    const [[panier]] = await pool.query('SELECT id FROM paniers WHERE utilisateur_id = :userId LIMIT 1', {
+      userId,
+    })
+    if (!panier?.id) return res.status(404).json({ error: 'Panier introuvable' })
+
+    await pool.query(
+      'DELETE FROM panier_articles WHERE panier_id = :panierId AND produit_id = :produitId',
+      { panierId: panier.id, produitId },
+    )
+
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+app.get('/api/admin/paniers', requireAuth, requireRole('admin'), async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT p.id as panierId, p.utilisateur_id as utilisateurId, p.jeton_visiteur as jetonVisiteur,
+              p.cree_le as creeLe, u.email as utilisateurEmail,
+              COUNT(pa.id) as totalArticles,
+              COALESCE(SUM(pa.quantite * pr.prix), 0) as montantEstime
+       FROM paniers p
+       LEFT JOIN utilisateurs u ON u.id = p.utilisateur_id
+       LEFT JOIN panier_articles pa ON pa.panier_id = p.id
+       LEFT JOIN produits pr ON pr.id = pa.produit_id
+       GROUP BY p.id, p.utilisateur_id, p.jeton_visiteur, p.cree_le, u.email
+       ORDER BY p.cree_le DESC
+       LIMIT 500`,
+    )
+
+    res.json(rows)
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
@@ -1210,33 +1622,33 @@ const paiementInitSchema = z.object({
  */
 async function triggerVente(conn, reference) {
   const [[cmd]] = await conn.query(
-    'SELECT id, utilisateur_id, montant_total, statut_paiement FROM commandes WHERE reference = :ref',
+    'SELECT id, utilisateur_id, montant_total, statut_paiement, reference FROM commandes WHERE reference = :ref',
     { ref: reference }
   )
   if (cmd) {
     // 1. On vérifie si la vente n'existe pas déjà pour éviter les doublons
-    const [[exists]] = await conn.query('SELECT id FROM ventes WHERE commande_id = :id', { id: cmd.id })
+    const [[exists]] = await conn.query('SELECT id FROM ventes WHERE reference = :ref', { ref: reference })
     if (!exists) {
-      // 2. Enregistrer la vente
+      // 2. Enregistrer la vente avec la référence (très important car la commande sera supprimée)
+      const [vResult] = await conn.query(
+        'INSERT INTO ventes (commande_id, reference, utilisateur_id, montant, date_vente) VALUES (:cid, :ref, :uid, :mt, NOW())',
+        { cid: cmd.id, ref: cmd.reference, uid: cmd.utilisateur_id, mt: cmd.montant_total }
+      )
+      const venteId = vResult.insertId
+
+      // 3. ARCHIVAGE PROFESSIONNEL : Copier les détails des articles avant suppression
       await conn.query(
-        'INSERT INTO ventes (commande_id, utilisateur_id, montant, date_vente) VALUES (:cid, :uid, :mt, NOW())',
-        { cid: cmd.id, uid: cmd.utilisateur_id, mt: cmd.montant_total }
+        `INSERT INTO vente_details (vente_id, produit_id, quantite, prix_unitaire)
+         SELECT :venteId, produit_id, quantite, prix_unitaire 
+         FROM commande_details WHERE commande_id = :cmdId`,
+        { venteId, cmdId: cmd.id }
       )
 
-      // 3. RÉDUIRE LE STOCK pour chaque produit de la commande
-      const [details] = await conn.query(
-        'SELECT produit_id, quantite FROM commande_details WHERE commande_id = :cid',
-        { cid: cmd.id }
-      )
+      // 4. SUPPRESSION AUTOMATIQUE DE LA COMMANDE (Demande utilisateur)
+      // La contrainte ON DELETE SET NULL sur ventes.commande_id permet de garder la trace sans casser l'intégrité
+      await conn.query('DELETE FROM commandes WHERE id = :id', { id: cmd.id })
       
-      for (const item of details) {
-        await conn.query(
-          'UPDATE produits SET stock_quantite = GREATEST(0, stock_quantite - :qty) WHERE id = :pid',
-          { qty: item.quantite, pid: item.produit_id }
-        )
-      }
-
-      console.log(`[TRIGGER CODE] Vente enregistrée et stock réduit pour ${reference}`)
+      console.log(`[TRIGGER CODE] Commande ${reference} transformée en Vente et supprimée du registre actif.`)
     }
   }
 }
@@ -1509,6 +1921,27 @@ app.get('/api/notifications', async (_req, res) => {
   }
 })
 
+app.get('/api/notifications/unread-count', requireAuth, async (_req, res) => {
+  try {
+    const [[row]] = await pool.query('SELECT COUNT(*) as unreadCount FROM notifications WHERE lu = 0')
+    res.json({ unreadCount: Number(row?.unreadCount ?? 0) })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+app.put('/api/notifications/:id/lu', requireAuth, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'id invalide' })
+
+  try {
+    await pool.query('UPDATE notifications SET lu = 1 WHERE id = :id', { id })
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
 app.get('/api/commandes', requireAuth, async (req, res) => {
   try {
     const isAdmin = req.user?.role === 'admin'
@@ -1556,11 +1989,21 @@ app.put('/api/commandes/:id', requireAuth, requireRole('admin'), async (req, res
       return res.status(404).json({ error: 'Commande introuvable' })
     }
 
-    // --- LOGIQUE TRIGGER 1: Passage à PAYÉ (Vente + Stock) ---
+    // --- LOGIQUE TRANSITION AUTOMATIQUE : PAIEMENT RÉUSSI -> VENTE + ARCHIVAGE ---
     if (statutPaiement === 'paye' && oldCmd.statut_paiement !== 'paye') {
-      shouldEnsureVente = true
-      // Déclenchement de la facture (Email + WhatsApp simulé)
-      setImmediate(() => sendInvoice(oldCmd.id))
+      // 1. Déclencher le transfert vers 'ventes', archivage articles, et suppression de 'commandes'
+      await triggerVente(conn, oldCmd.reference)
+      
+      await conn.commit()
+      
+      // 2. Déclenchement de la facture (Email + WhatsApp simulé)
+      // Note: On utilise la référence car l'ID de la commande n'existe plus en table active
+      setImmediate(() => sendInvoice(null, oldCmd.reference))
+      
+      return res.json({ 
+        success: true, 
+        message: 'Félicitations ! La commande a été validée, payée et archivée en tant que vente réussie.' 
+      })
     }
 
     // --- LOGIQUE TRIGGER 7: Paiement ÉCHOUÉ (Notification) ---
@@ -1851,10 +2294,9 @@ app.get('/api/admin/transactions', requireAuth, requireRole('admin'), async (_re
 app.get('/api/admin/ventes', requireAuth, requireRole('admin'), async (_req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT v.id, v.commande_id as commandeId, c.reference, v.montant, v.date_vente as dateVente,
+      `SELECT v.id, v.commande_id as commandeId, v.reference, v.montant, v.date_vente as dateVente,
               u.email as clientEmail, u.nom as clientNom, u.prenom as clientPrenom
        FROM ventes v
-       JOIN commandes c ON v.commande_id = c.id
        LEFT JOIN utilisateurs u ON v.utilisateur_id = u.id
        ORDER BY v.date_vente DESC`
     )
@@ -1934,35 +2376,17 @@ app.get('/api/commandes/:id/details', requireAuth, async (req, res) => {
 // --- CHATBOT IA INTELLIGENT ---
 app.post('/api/chatbot', async (req, res) => {
   const { message } = req.body
-  const msg = (message || '').toLowerCase()
-  
+  const msg = String(message || '').toLowerCase()
+
   try {
-    // 1. ANALYSE DU CONTEXTE DU SITE (Recherche dynamique)
-    
-    // Recherche de produits
-    if (msg.includes('produit') || msg.includes('vend') || msg.includes('achat') || msg.includes('stock') || msg.includes('combien') || msg.includes('montre-moi') || msg.includes('cherche')) {
-      const [products] = await pool.query(
-        'SELECT p.nom, p.prix, p.stock_quantite, c.nom as categorie FROM produits p JOIN categories c ON p.categorie_id = c.id WHERE p.stock_quantite > 0 AND (p.nom LIKE :q OR p.description LIKE :q) LIMIT 5',
-        { q: `%${msg.replace(/produit|cherche|vend|montre-moi/g, '').trim()}%` }
-      )
-      
-      if (products.length > 0) {
-        const list = products.map(p => `✨ *${p.nom}*\n   Prix: ${Number(p.prix).toFixed(2)} USD\n   Catégorie: ${p.categorie}`).join('\n\n')
-        return res.json({ 
-          reply: `Bienvenue chez Maisha Shop ! J'ai trouvé ces articles pour vous :\n\n${list}\n\nSouhaitez-vous que je les ajoute à votre panier ?` 
-        })
-      }
+    if (isGreetingMessage(msg) || isThanksMessage(msg) || isGoodbyeMessage(msg)) {
+      return res.json({ reply: fallbackChatbotReply(message) })
     }
 
-    // Informations sur les catégories
-    if (msg.includes('categorie') || msg.includes('rayon') || msg.includes('genre')) {
-      const [categories] = await pool.query('SELECT nom, description FROM categories WHERE statut = 1')
-      const list = categories.map(c => `📂 *${c.nom}* : ${c.description || 'Découvrez nos nouveautés'}`).join('\n')
-      return res.json({ reply: `Nous avons plusieurs rayons disponibles :\n\n${list}` })
-    }
+    const projectContextMatches = await collectProjectContext(message)
+    const projectContext = formatProjectContext(projectContextMatches)
 
-    // Suivi de commande complexe
-    if (msg.includes('cmd-') || msg.includes('commande') || msg.includes('ma commande') || msg.includes('livraison')) {
+    if (msg.includes('cmd-') || msg.includes('commande') || msg.includes('livraison')) {
       const refMatch = msg.match(/cmd-[a-z0-9]+/i)
       if (refMatch) {
         const [cmd] = await pool.query(
@@ -1974,37 +2398,44 @@ app.post('/api/chatbot', async (req, res) => {
         )
         if (cmd.length > 0) {
           const c = cmd[0]
-          return res.json({ 
-            reply: `Bonjour ${c.prenom} ! Voici l'état de votre commande *${refMatch[0].toUpperCase()}* :\n\n💰 *Total* : ${Number(c.montant_total).toFixed(2)} USD\n💳 *Paiement* : ${c.statut_paiement}\n🚚 *Livraison* : ${c.statut_livraison}\n\nUne équipe s'en occupe activement !` 
+          return res.json({
+            reply: `Bonjour ${c.prenom} ! Voici l'état de votre commande *${refMatch[0].toUpperCase()}* :\n\n💰 *Total* : ${Number(c.montant_total).toFixed(2)} USD\n💳 *Paiement* : ${c.statut_paiement}\n🚚 *Livraison* : ${c.statut_livraison}\n\nUne équipe s'en occupe activement !`,
           })
         }
       }
       return res.json({ reply: "Pour suivre précisément votre colis, merci de m'indiquer la référence de commande (ex: CMD-XXXXX)." })
     }
 
-    // 2. RECHERCHE EXTERNE (API GRATUITE) - Simulé ici, peut être étendu avec Gemini/OpenAI
-    // Si la question est générale, on utilise une base de connaissance "Maisha Shop"
-    if (msg.includes('qui') || msg.includes('quoi') || msg.includes('maisha') || msg.includes('entreprise')) {
-      return res.json({
-        reply: "Maisha Shop est la plateforme leader d'e-commerce en RDC. 🇨🇩\n\nNous proposons :\n✅ Produits authentiques\n✅ Paiements sécurisés (Airtel Money, Maisha Pay)\n✅ Service client 24/7\n\nNotre mission est de digitaliser le commerce pour tous."
-      })
+    if (msg.includes('produit') || msg.includes('vend') || msg.includes('achat') || msg.includes('stock') || msg.includes('montre-moi') || msg.includes('cherche')) {
+      const [products] = await pool.query(
+        'SELECT p.nom, p.prix, p.stock_quantite, c.nom as categorie FROM produits p JOIN categories c ON p.categorie_id = c.id WHERE p.stock_quantite > 0 AND (p.nom LIKE :q OR p.description LIKE :q) LIMIT 5',
+        { q: `%${msg.replace(/produit|cherche|vend|montre-moi/g, '').trim()}%` }
+      )
+
+      if (products.length > 0) {
+        const list = products.map((p) => `✨ *${p.nom}*\n   Prix: ${Number(p.prix).toFixed(2)} USD\n   Catégorie: ${p.categorie}`).join('\n\n')
+        return res.json({
+          reply: `Bienvenue chez Maisha Shop ! J'ai trouvé ces articles pour vous :\n\n${list}\n\nSouhaitez-vous que je les ajoute à votre panier ?`,
+        })
+      }
     }
 
-    // 3. LOGIQUE D'INTELLIGENCE DIRECTIONNELLE
-    const responses = {
-      'aide': "Je peux vous aider à :\n1. Trouver un produit 🔍\n2. Suivre une commande 📦\n3. Comprendre les modes de paiement 💳\n4. Contacter un humain 👨‍💼",
-      'paiement': "💳 Nous acceptons :\n- Airtel Money\n- Maisha Pay (Cartes & Mobile)\n- Cash à la livraison (sous conditions)",
-      'contact': "Vous pouvez nous joindre par WhatsApp au +243 000 000 000 ou par email à support@maishashop.com",
-    };
-
-    for (const [key, value] of Object.entries(responses)) {
-      if (msg.includes(key)) return res.json({ reply: value });
+    if (msg.includes('categorie') || msg.includes('rayon') || msg.includes('genre')) {
+      const [categories] = await pool.query('SELECT nom, description FROM categories WHERE statut = 1')
+      const list = categories.map((c) => `📂 *${c.nom}* : ${c.description || 'Découvrez nos nouveautés'}`).join('\n')
+      return res.json({ reply: `Nous avons plusieurs rayons disponibles :\n\n${list}` })
     }
 
-    // 4. RÉPONSE DÉFAUT "COMPLEXE"
-    res.json({ 
-      reply: "Je n'ai pas trouvé de réponse exacte dans notre base de données pour votre demande. 🧐\n\nToutefois, je peux rechercher un produit pour vous si vous me donnez son nom, ou vérifier le statut d'une commande avec sa référence 'CMD-XXXX'." 
-    })
+    try {
+      const geminiReply = await askGemini(message, projectContext)
+      if (geminiReply) {
+        return res.json({ reply: geminiReply })
+      }
+    } catch (geminiError) {
+      console.warn('[CHATBOT GEMINI] fallback local', geminiError?.message || geminiError)
+    }
+
+    return res.json({ reply: projectContext ? `Voici ce que j'ai trouvé dans le projet :\n\n${projectContext}\n\n${fallbackChatbotReply(message)}` : fallbackChatbotReply(message) })
 
   } catch (e) {
     console.error('[CHATBOT ERROR]', e)
@@ -2301,8 +2732,10 @@ app.get('/api/admin/rapport-commandes/pdf', requireAuth, requireRole('admin'), a
 
 // --- SERVIR LE FRONTEND (SPA) ---
 const distPath = path.join(__dirname, '../dist')
+const publicPath = path.join(__dirname, '../public')
 
 // 1. Servir les fichiers statiques (JS, CSS, Images)
+app.use('/media', express.static(path.join(publicPath, 'media')))
 app.use(express.static(distPath))
 
 // 2. Fallback SPA (compatible Express 5): middleware sans pattern wildcard

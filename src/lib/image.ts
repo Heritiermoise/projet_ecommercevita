@@ -17,8 +17,22 @@ export function normalizeProductImageUrl(value: string | null | undefined): stri
 
   normalized = normalized.replace(/^['"]+|['"]+$/g, '')
   normalized = normalized.replace(/\\+/g, '/')
+  normalized = normalized.replace(/\s+/g, ' ').trim()
 
   if (!normalized) return null
+
+  const lowerNormalized = normalized.toLowerCase()
+  const mediaIndex = lowerNormalized.indexOf('/media/')
+  if (mediaIndex >= 0) {
+    const mediaPath = normalized.slice(mediaIndex)
+    return encodeURI(mediaPath)
+  }
+
+  const publicIndex = lowerNormalized.indexOf('/public/')
+  if (publicIndex >= 0) {
+    const afterPublic = normalized.slice(publicIndex + '/public'.length)
+    return encodeURI(afterPublic.startsWith('/') ? afterPublic : `/${afterPublic}`)
+  }
 
   if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(normalized)) {
     return normalized
@@ -40,9 +54,9 @@ export function normalizeProductImageUrl(value: string | null | undefined): stri
     normalized = normalized.replace(/^[A-Za-z]:\//, '/')
   }
 
-  if (normalized.startsWith('/')) return normalized
+  if (normalized.startsWith('/')) return encodeURI(normalized)
 
-  if (normalized.includes('/')) return `/${normalized.replace(/^\/+/, '')}`
+  if (normalized.includes('/')) return encodeURI(`/${normalized.replace(/^\/+/, '')}`)
 
   return null
 }

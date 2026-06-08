@@ -40,6 +40,21 @@ Définis ces variables dans le dashboard Vercel (Project Settings > Environment 
 - `DB_SSL=true` si ton hébergeur DB exige TLS
 - `VITE_SUPABASE_URL`: URL de ton projet Supabase
 - `VITE_SUPABASE_ANON_KEY`: TA clé anonyme Supabase (Anon Key)
+- `GEMINI_API_KEY`: clé API Gemini pour l'assistant intelligent
+- `GEMINI_MODEL`: modèle Gemini utilisé, par défaut `gemini-2.5-flash`
+
+## Assistant intelligent Gemini
+
+Le chatbot du projet est branché sur [backend/index.js](backend/index.js) et suit cette logique:
+
+1. Quand la question semble liée au projet, il fouille d'abord dans les fichiers du dépôt pour extraire des extraits pertinents.
+2. Il envoie ensuite la question et le contexte trouvé à Gemini pour produire une réponse professionnelle.
+3. Si Gemini n'est pas configuré ou répond mal, le backend bascule sur un fallback local propre.
+
+Pour activer l'assistant, ajoute dans ton `.env` local:
+
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL=gemini-2.5-flash`
 
 ### Variables Railway (MySQL)
 

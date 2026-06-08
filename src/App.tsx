@@ -20,6 +20,7 @@ import HistoriquePaiementsPage from './pages/HistoriquePaiementsPage'
 import UtilisateursPage from './pages/UtilisateursPage'
 import VentesPage from './pages/VentesPage'
 import AproposPage from './pages/AproposPage'
+import PaniersAdminPage from './pages/PaniersAdminPage'
 import { RequireAdmin, RequireAuth, RequireClient } from './auth/Require'
 
 function App() {
@@ -152,6 +153,15 @@ function App() {
           element={
             <RequireAdmin>
               <VentesPage />
+            </RequireAdmin>
+          }
+        />
+
+        <Route
+          path="/admin/paniers"
+          element={
+            <RequireAdmin>
+              <PaniersAdminPage />
             </RequireAdmin>
           }
         />

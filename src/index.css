@@ -48,3 +48,16 @@ input, textarea, select {
 .glass {
   @apply bg-white/70 backdrop-blur-md border border-white/20 dark:bg-slate-900/70 dark:border-white/10;
 }
+
+/* Palette sobre (3 tons dominants): slate, indigo, emerald */
+[class*="bg-rose-"], [class*="text-rose-"], [class*="border-rose-"] {
+  @apply bg-indigo-100 text-indigo-700 border-indigo-200 !important;
+}
+
+[class*="bg-amber-"], [class*="text-amber-"], [class*="border-amber-"] {
+  @apply bg-emerald-100 text-emerald-700 border-emerald-200 !important;
+}
+
+[class*="from-fuchsia-"], [class*="to-fuchsia-"] {
+  --tw-gradient-to: rgb(79 70 229 / 1) var(--tw-gradient-to-position) !important;
+}

@@ -123,7 +123,7 @@ export default function AdminDashboardPage() {
       ) : null}
 
       <div className="mt-8 grid gap-4 lg:grid-cols-2">
-        <div className="rounded-3xl border border-indigo-100 bg-gradient-to-br from-indigo-500 to-indigo-700 p-8 text-white shadow-xl">
+        <div className="rounded-3xl border border-slate-200 bg-slate-900 p-8 text-white shadow-xl shadow-slate-200">
           <div className="text-sm font-bold uppercase tracking-widest opacity-80">Total Ventes (60 jours)</div>
           <div className="mt-2 text-4xl font-black">
             {loading ? '...' : formatAmount(data?.statsVentes?.total60Jours ?? 0)}
@@ -131,7 +131,7 @@ export default function AdminDashboardPage() {
           <p className="mt-4 text-xs opacity-70 italic">* Basé sur les transactions validées uniquement</p>
         </div>
 
-        <div className="rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-500 to-emerald-700 p-8 text-white shadow-xl">
+        <div className="rounded-3xl border border-slate-200 bg-slate-900 p-8 text-white shadow-xl shadow-slate-200">
           <div className="text-sm font-bold uppercase tracking-widest opacity-80">Total Temps Réel (Global)</div>
           <div className="mt-2 text-4xl font-black">
             {loading ? '...' : formatAmount(data?.statsVentes?.totalGlobal ?? 0)}
@@ -143,67 +143,67 @@ export default function AdminDashboardPage() {
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Link 
           to="/commandes" 
-          className="group rounded-2xl border border-indigo-100 bg-indigo-50 p-4 shadow-sm hover:bg-indigo-100 transition-all hover:shadow-md"
+          className="group rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm hover:bg-slate-100 transition-all hover:shadow-md"
         >
           <div className="flex items-center justify-between">
-            <div className="rounded-lg bg-indigo-600 p-2 text-white shadow-lg shadow-indigo-200">
+            <div className="rounded-lg bg-slate-900 p-2 text-white shadow-lg shadow-slate-200">
               <ShoppingBag className="h-5 w-5" />
             </div>
-            <ArrowRight className="h-4 w-4 text-indigo-400 group-hover:translate-x-1 transition-transform" />
+            <ArrowRight className="h-4 w-4 text-slate-500 group-hover:translate-x-1 transition-transform" />
           </div>
           <div className="mt-4">
-            <div className="text-xs font-bold uppercase tracking-wider text-indigo-600">Commandes</div>
-            <div className="text-2xl font-black text-indigo-900">Gérer</div>
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-600">Commandes</div>
+            <div className="text-2xl font-black text-slate-900">Gérer</div>
           </div>
         </Link>
 
         <Link 
           to="/admin/transactions" 
-          className="group rounded-2xl border border-emerald-100 bg-emerald-50 p-4 shadow-sm hover:bg-emerald-100 transition-all hover:shadow-md"
+          className="group rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm hover:bg-slate-100 transition-all hover:shadow-md"
         >
           <div className="flex items-center justify-between">
-            <div className="rounded-lg bg-emerald-600 p-2 text-white shadow-lg shadow-emerald-200">
+            <div className="rounded-lg bg-slate-900 p-2 text-white shadow-lg shadow-slate-200">
               <CreditCard className="h-5 w-5" />
             </div>
-            <ArrowRight className="h-4 w-4 text-emerald-400 group-hover:translate-x-1 transition-transform" />
+            <ArrowRight className="h-4 w-4 text-slate-500 group-hover:translate-x-1 transition-transform" />
           </div>
           <div className="mt-4">
-            <div className="text-xs font-bold uppercase tracking-wider text-emerald-600">Finances</div>
-            <div className="text-2xl font-black text-emerald-900">Transactions</div>
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-600">Finances</div>
+            <div className="text-2xl font-black text-slate-900">Transactions</div>
           </div>
         </Link>
 
         {/* Gestion des Utilisateurs */}
         <Link 
           to="/admin/utilisateurs" 
-          className="group rounded-2xl border border-amber-100 bg-amber-50 p-4 shadow-sm hover:bg-amber-100 transition-all hover:shadow-md"
+          className="group rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm hover:bg-slate-100 transition-all hover:shadow-md"
         >
           <div className="flex items-center justify-between">
-            <div className="rounded-lg bg-amber-600 p-2 text-white shadow-lg shadow-amber-200">
+            <div className="rounded-lg bg-slate-900 p-2 text-white shadow-lg shadow-slate-200">
               <Users className="h-5 w-5" />
             </div>
-            <ArrowRight className="h-4 w-4 text-amber-400 group-hover:translate-x-1 transition-transform" />
+            <ArrowRight className="h-4 w-4 text-slate-500 group-hover:translate-x-1 transition-transform" />
           </div>
           <div className="mt-4">
-            <div className="text-xs font-bold uppercase tracking-wider text-amber-600">Utilisateurs</div>
-            <div className="text-2xl font-black text-amber-900">Gérer les comptes</div>
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-600">Utilisateurs</div>
+            <div className="text-2xl font-black text-slate-900">Gérer les comptes</div>
           </div>
         </Link>
 
         {/* Journal des Ventes */}
         <Link 
           to="/admin/ventes" 
-          className="group rounded-2xl border border-rose-100 bg-rose-50 p-4 shadow-sm hover:bg-rose-100 transition-all hover:shadow-md"
+          className="group rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm hover:bg-slate-100 transition-all hover:shadow-md"
         >
           <div className="flex items-center justify-between">
-            <div className="rounded-lg bg-rose-600 p-2 text-white shadow-lg shadow-rose-200">
+            <div className="rounded-lg bg-slate-900 p-2 text-white shadow-lg shadow-slate-200">
               <TrendingUp className="h-5 w-5" />
             </div>
-            <ArrowRight className="h-4 w-4 text-rose-400 group-hover:translate-x-1 transition-transform" />
+            <ArrowRight className="h-4 w-4 text-slate-500 group-hover:translate-x-1 transition-transform" />
           </div>
           <div className="mt-4">
-            <div className="text-xs font-bold uppercase tracking-wider text-rose-600">Revenus</div>
-            <div className="text-2xl font-black text-rose-900">Journal des Ventes</div>
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-600">Revenus</div>
+            <div className="text-2xl font-black text-slate-900">Journal des Ventes</div>
           </div>
         </Link>
       </div>
@@ -223,10 +223,10 @@ export default function AdminDashboardPage() {
 
         <div className="rounded-2xl border bg-white dark:bg-slate-900 dark:border-slate-800 p-4 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-emerald-100 dark:bg-emerald-950/30 p-2 text-emerald-600 dark:text-emerald-400">
+            <div className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2 text-slate-600 dark:text-slate-400">
               <Users className="h-5 w-5" />
             </div>
-            <div className="text-xs font-bold uppercase tracking-wider text-emerald-500">En ligne</div>
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">En ligne</div>
           </div>
           <div className="mt-4 text-2xl font-black text-slate-900 dark:text-slate-100">
             {loading ? '—' : data?.connectedCount ?? 0}
@@ -235,10 +235,10 @@ export default function AdminDashboardPage() {
 
         <div className="rounded-2xl border bg-white dark:bg-slate-900 dark:border-slate-800 p-4 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-amber-100 dark:bg-amber-950/30 p-2 text-amber-600 dark:text-amber-400">
+            <div className="rounded-lg bg-slate-100 dark:bg-slate-800 p-2 text-slate-600 dark:text-slate-400">
               <Package className="h-5 w-5" />
             </div>
-            <div className="text-xs font-bold uppercase tracking-wider text-amber-500">Stock total</div>
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Stock total</div>
           </div>
           <div className="mt-4 text-2xl font-black text-slate-900 dark:text-slate-100">
             {loading ? '—' : totalProduits}
@@ -273,7 +273,7 @@ export default function AdminDashboardPage() {
                         <span
                           className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${
                             c.isConnected
-                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              ? 'border-slate-900 bg-slate-900 text-white'
                               : 'border-slate-200 bg-slate-50 text-slate-600'
                           }`}
                         >

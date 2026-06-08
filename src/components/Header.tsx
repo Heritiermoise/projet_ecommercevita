@@ -93,6 +93,7 @@ export default function Header() {
         { label: "Categories", to: "/categories-gestion", icon: <Settings className="h-4 w-4" /> },
         { label: "Historique prix", to: "/historique-prix", icon: <TrendingUp className="h-4 w-4" /> },
         { label: "Visites", to: "/visites", icon: <Users className="h-4 w-4" /> },
+        { label: "Paniers", to: "/admin/paniers", icon: <ShoppingCart className="h-4 w-4" /> },
         { label: "Utilisateurs", to: "/admin/utilisateurs", icon: <User className="h-4 w-4" /> },
         { label: "Ventes", to: "/admin/ventes", icon: <DollarSign className="h-4 w-4" /> }
       )
@@ -118,6 +119,7 @@ export default function Header() {
         { label: "Categories", to: "/categories-gestion", icon: <Settings className="h-4 w-4" /> },
         { label: "Historique prix", to: "/historique-prix", icon: <TrendingUp className="h-4 w-4" /> },
         { label: "Visites", to: "/visites", icon: <Users className="h-4 w-4" /> },
+        { label: "Paniers", to: "/admin/paniers", icon: <ShoppingCart className="h-4 w-4" /> },
         { label: "Utilisateurs", to: "/admin/utilisateurs", icon: <User className="h-4 w-4" /> },
         { label: "Ventes", to: "/admin/ventes", icon: <DollarSign className="h-4 w-4" /> }
       )
