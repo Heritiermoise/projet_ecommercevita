@@ -1442,6 +1442,14 @@ async function createCommandeForUser(userId, items, modePaiement, statutPaiement
     // 3. Insertion Détails Commande (Manquant précédemment)
     for (const item of items) {
       await conn.query(
+        'UPDATE produits SET stock_quantite = GREATEST(stock_quantite - :quantite, 0) WHERE id = :produitId',
+        {
+          produitId: item.produitId,
+          quantite: item.quantite,
+        },
+      )
+
+      await conn.query(
         `INSERT INTO commande_details (commande_id, produit_id, quantite, prix_unitaire)
          VALUES (:commandeId, :produitId, :quantite, :prixUnitaire)`,
         {

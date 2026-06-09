@@ -261,6 +261,29 @@ async function removeLegacyPaymentTrigger() {
 
       console.log('[DATABASE] Legacy cart-cleanup trigger removed or already absent.')
 
+      const legacyTriggers = [
+        'trg_ai_commande_details_total',
+        'trg_ai_commande_details_stock',
+        'trg_au_commande_details_total',
+        'trg_au_commande_details_stock',
+        'trg_ad_commande_details_total',
+        'trg_bi_commandes_reference',
+        'trg_ai_commandes_nettoyage_panier',
+        'trg_ai_commandes_notification_nouvelle',
+        'trg_au_commandes_creation_vente',
+        'trg_au_commandes_transaction_reussie',
+        'trg_au_commandes_paiement_echoue_notif',
+        'trg_au_commandes_annulation_restock',
+        'trg_au_commandes_annulation_notif',
+        'trg_au_produits_stock_low',
+        'trg_ai_transactions_paiement_notif',
+        'trg_ai_avis_notification',
+      ]
+
+      for (const triggerName of legacyTriggers) {
+        await pool.query(`DROP TRIGGER IF EXISTS ${triggerName}`)
+      }
+
       const notificationTriggers = [
         'trg_ai_avis_notification',
         'trg_ai_commandes_notification_nouvelle',
