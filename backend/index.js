@@ -1455,9 +1455,10 @@ async function createCommandeForUser(userId, items, modePaiement, statutPaiement
 
     // TRIGGER 2: Nettoyage du Panier
     await conn.query(
-      `DELETE pa FROM panier_articles pa 
-       JOIN paniers p ON pa.panier_id = p.id 
-       WHERE p.utilisateur_id = :userId`,
+      `DELETE FROM panier_articles 
+       WHERE panier_id IN (
+         SELECT id FROM paniers WHERE utilisateur_id = :userId
+       )`,
       { userId }
     )
 
