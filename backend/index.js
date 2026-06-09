@@ -26,7 +26,23 @@ dns.setServers(['8.8.8.8', '8.8.4.4']) // Utilise les DNS de Google pour plus de
 
 dotenv.config()
 
-const BASE_URL = process.env.APP_URL || 'http://localhost:3001'
+function resolvePublicAppUrl() {
+  const candidates = [
+    process.env.APP_URL,
+    process.env.PUBLIC_URL,
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
+    'http://localhost:3001',
+  ]
+
+  for (const candidate of candidates) {
+    const value = String(candidate || '').trim().replace(/\/+$/, '')
+    if (value) return value
+  }
+
+  return 'http://localhost:3001'
+}
+
+const BASE_URL = resolvePublicAppUrl()
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY?.trim() || ''
 const GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash'
 const PROJECT_ROOT = path.resolve(__dirname, '..')
@@ -290,25 +306,29 @@ app.use((err, _req, res, next) => {
   next(err)
 })
 
-// Config Mail (Nodemailer) - Configuration robuste avec IP plutôt que nom de domaine
+// Config Mail (Nodemailer) pilotée par les variables d'environnement
+const smtpHost = process.env.SMTP_HOST?.trim() || 'smtp.gmail.com'
+const smtpPort = Number(process.env.SMTP_PORT || 465)
+const smtpSecure = String(process.env.SMTP_SECURE ?? (smtpPort === 465 ? 'true' : 'false')).toLowerCase() === 'true'
+
 const transporter = nodemailer.createTransport({
-  host: '74.125.133.108', // IP directe de smtp.gmail.com
-  port: 465,
-  secure: true,
+  host: smtpHost,
+  port: smtpPort,
+  secure: smtpSecure,
   auth: {
-    user: process.env.SMTP_USER,
+    user: process.env.SMTP_USER?.trim(),
     pass: process.env.SMTP_PASS?.replace(/\s+/g, ''),
   },
   tls: {
     rejectUnauthorized: false,
-    servername: 'smtp.gmail.com'
+    servername: smtpHost,
   },
-  connectionTimeout: 45000, // Augmenté à 45s pour éviter le ETIMEDOUT
-  greetingTimeout: 30000, 
-  socketTimeout: 60000,   
-  pool: true,              // Pooling pour garder la connexion ouverte
+  connectionTimeout: 45000,
+  greetingTimeout: 30000,
+  socketTimeout: 60000,
+  pool: true,
   maxConnections: 5,
-  maxMessages: 100
+  maxMessages: 100,
 })
 
 // Vérification de la connexion avec retry logic
@@ -441,7 +461,9 @@ async function sendInvoice(commandeId, reference = null) {
         console.warn('[MAIL ERROR] Identifiants SMTP manquants dans le fichier .env')
       } else {
         await transporter.sendMail({
-          from: `"Maisha Shop" <${process.env.SMTP_USER}>`,
+          from: process.env.SMTP_FROM
+            ? `"Maisha Shop" <${process.env.SMTP_FROM}>`
+            : `"Maisha Shop" <${process.env.SMTP_USER}>`,
           to: commande.email,
           subject: `Facture de votre commande ${commande.reference}`,
           html: htmlEmail,
@@ -554,11 +576,12 @@ app.post(['/api/auth/register', '/api/inscription.php'], async (req, res) => {
     return res.status(400).json({ error: 'Validation error', details: parsed.error.flatten() })
   }
   const body = parsed.data
+  const email = String(body.email).trim()
   const normalizedPhone = normalizePhone(body.telephone)
   try {
     // Vérifier si l'email existe déjà
     const [[existingEmail]] = await pool.query('SELECT id FROM utilisateurs WHERE email = :email LIMIT 1', { 
-      email: body.email 
+      email 
     })
     if (existingEmail) {
       return res.status(409).json({ error: "Cet email est déjà utilisé." })
@@ -593,7 +616,7 @@ app.post(['/api/auth/register', '/api/inscription.php'], async (req, res) => {
       `INSERT INTO utilisateurs (email, mot_de_passe, nom, prenom, telephone, role)
        VALUES (:email, :motDePasse, :nom, :prenom, :telephone, :role)`,
       {
-        email: body.email,
+        email,
         motDePasse: passwordHash,
         nom: body.nom ?? null,
         prenom: body.prenom ?? null,
@@ -604,7 +627,7 @@ app.post(['/api/auth/register', '/api/inscription.php'], async (req, res) => {
 
     const user = {
       id: result.insertId,
-      email: body.email,
+      email,
       nom: body.nom ?? null,
       prenom: body.prenom ?? null,
       telephone: body.telephone ?? null,
@@ -640,11 +663,12 @@ app.post(['/api/auth/login', '/api/connexion.php'], async (req, res) => {
   }
 
   const body = parsed.data
+  const email = String(body.email).trim()
   try {
     const [[u]] = await pool.query(
       `SELECT id, email, mot_de_passe as motDePasse, nom, prenom, telephone, role
        FROM utilisateurs WHERE email = :email LIMIT 1`,
-      { email: body.email },
+      { email },
     )
     if (!u?.id) return res.status(401).json({ error: 'Identifiants invalides' })
 
@@ -1481,7 +1505,7 @@ const MaishaPayService = {
       baseUrl = `${baseUrl}/sandbox`
     }
 
-    const firstOrigin = (process.env.CORS_ORIGIN ?? 'http://localhost:5173').split(',')[0].trim()
+    const firstOrigin = resolvePublicAppUrl()
 
     try {
       console.log(`[MAISHAPAY] Appel API sur ${baseUrl}/transaction/initiate (Ref: ${reference})`)
@@ -1854,17 +1878,28 @@ app.post('/api/paiements/initier', requireAuth, requireRole('client'), async (re
 app.post('/api/paiements/maishapay/callback', async (req, res) => {
   console.log('[MAISHAPAY CALLBACK]', req.body)
   const { order_id, status, transaction_id } = req.body
+  const normalizedStatus = String(status || '').toLowerCase()
+  const isSuccess = ['success', 'succeeded', 'paid', 'paye', 'reussi', 'completed', 'complete'].includes(normalizedStatus)
 
   const conn = await pool.getConnection()
   try {
     await conn.beginTransaction()
-    const isSuccess = status === 'success'
+    const [[commandRow]] = await conn.query(
+      'SELECT id, reference FROM commandes WHERE reference = :orderId LIMIT 1',
+      { orderId: order_id },
+    )
     
     // Mettre à jour la commande
-    if (isSuccess) {
+    if (isSuccess && commandRow?.id) {
+      await triggerTransactionPaiement(conn, commandRow.id, {
+        source: 'maishapay_webhook',
+        referenceExterne: transaction_id || null,
+        rawData: req.body,
+      })
+
       await conn.query(
-        "UPDATE commandes SET statut_paiement = 'paye' WHERE reference = :orderId",
-        { orderId: order_id }
+        "UPDATE commandes SET statut_paiement = 'paye' WHERE id = :id",
+        { id: commandRow.id }
       )
       
       // TRIGGER: Création de vente
@@ -1874,32 +1909,13 @@ app.post('/api/paiements/maishapay/callback', async (req, res) => {
         'INSERT INTO notifications (message, lu) VALUES (:msg, 0)', 
         { msg: `✅ PAIEMENT RÉUSSI: La commande ${order_id} a été payée via Maisha Pay.` }
       )
-
-      // Récupérer l'ID pour la facture
-      const [[cmdRef]] = await conn.query('SELECT id FROM commandes WHERE reference = :orderId', { orderId: order_id })
-      if (cmdRef) {
-        // Envoi asynchrone après commit
-        setImmediate(() => sendInvoice(cmdRef.id))
-      }
     }
-
-    // Mettre à jour l'historique des transactions
-    await conn.query(
-      `UPDATE transactions_paiement 
-       SET statut = :statut, 
-           reference_externe = :extRef, 
-           donnees_brutes = :raw 
-       WHERE commande_id = (SELECT id FROM commandes WHERE reference = :orderId LIMIT 1)`,
-      { 
-        statut: isSuccess ? 'reussi' : (status === 'cancelled' ? 'annule' : 'echoue'),
-        extRef: transaction_id || null,
-        raw: JSON.stringify(req.body),
-        orderId: order_id
-      }
-    )
 
     console.log(`[MAISHAPAY] Webhook traité pour ${order_id}. Statut final: ${status}`)
     await conn.commit()
+    if (isSuccess) {
+      setImmediate(() => sendInvoice(null, order_id))
+    }
     res.sendStatus(200)
   } catch (error) {
     await conn.rollback()
@@ -1991,6 +2007,15 @@ app.put('/api/commandes/:id', requireAuth, requireRole('admin'), async (req, res
 
     // --- LOGIQUE TRANSITION AUTOMATIQUE : PAIEMENT RÉUSSI -> VENTE + ARCHIVAGE ---
     if (statutPaiement === 'paye' && oldCmd.statut_paiement !== 'paye') {
+      await triggerTransactionPaiement(conn, oldCmd.id, {
+        source: 'admin_validation',
+        rawData: {
+          adminId: req.user?.id ?? null,
+          previousStatus: oldCmd.statut_paiement,
+          nextStatus: 'paye',
+        },
+      })
+
       // 1. Déclencher le transfert vers 'ventes', archivage articles, et suppression de 'commandes'
       await triggerVente(conn, oldCmd.reference)
       
