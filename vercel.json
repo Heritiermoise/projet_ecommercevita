@@ -1,20 +1,15 @@
 {
   "buildCommand": "npm run build",
-  "outputDirectory": "dist",
   "functions": {
     "api/[...slug].js": {
       "runtime": "nodejs20.x",
       "maxDuration": 60
     }
   },
-  "rewrites": [
+  "routes": [
     {
-      "source": "/api/:path*",
-      "destination": "/api/[...slug]"
-    },
-    {
-      "source": "/:path*",
-      "destination": "/api/[...slug]"
+      "src": "/.*",
+      "dest": "/api/[...slug]"
     }
   ]
 }
