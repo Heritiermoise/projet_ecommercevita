@@ -230,6 +230,35 @@ async function removeLegacyPaymentTrigger() {
   legacyTriggerCleanupPromise = (async () => {
     try {
       await pool.query('DROP TRIGGER IF EXISTS trg_ai_commandes_nettoyage_panier')
+
+      // Suppression défensive: certains dumps ont créé des triggers incompatibles
+      // qui cassent l'initiation du paiement en production.
+      const [insertCommandeTriggers] = await pool.query(
+        `SELECT TRIGGER_NAME as triggerName, ACTION_STATEMENT as actionStatement
+         FROM information_schema.TRIGGERS
+         WHERE TRIGGER_SCHEMA = DATABASE()
+           AND EVENT_OBJECT_TABLE = 'commandes'
+           AND ACTION_TIMING = 'AFTER'
+           AND EVENT_MANIPULATION = 'INSERT'`
+      )
+
+      for (const trg of insertCommandeTriggers) {
+        const statement = String(trg.actionStatement || '').toLowerCase()
+        const looksLegacyPanierCleanup =
+          statement.includes('panier_articles') ||
+          statement.includes('delete pa from') ||
+          statement.includes('delete p from')
+
+        if (!looksLegacyPanierCleanup) continue
+
+        const triggerName = String(trg.triggerName || '').trim()
+        if (!triggerName) continue
+
+        const escapedTriggerName = `\`${triggerName.replace(/`/g, '``')}\``
+        await pool.query(`DROP TRIGGER IF EXISTS ${escapedTriggerName}`)
+        console.log(`[DATABASE] Removed legacy trigger: ${triggerName}`)
+      }
+
       console.log('[DATABASE] Legacy cart-cleanup trigger removed or already absent.')
 
       const notificationTriggers = [
