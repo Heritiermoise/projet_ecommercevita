@@ -1821,14 +1821,21 @@ app.post('/api/paiements/initier', requireAuth, requireRole('client'), async (re
     }
 
     if (method === 'maishapay') {
-      const maishaResult = await MaishaPayService.initiatePayment(montant, commande.reference, commande.commandeId)
-      responseData.paymentUrl = maishaResult.paymentUrl
-      responseData.message = "Redirection vers la passerelle de paiement Maisha Pay..."
-      
-      await pool.query(
-        'INSERT INTO notifications (message, lu) VALUES (:msg, 0)', 
-        { msg: `🌐 MAISHA PAY: Nouvelle tentative de paiement pour ${commande.reference} (${montant} USD).` }
-      )
+      try {
+        const maishaResult = await MaishaPayService.initiatePayment(montant, commande.reference, commande.commandeId)
+        responseData.paymentUrl = maishaResult.paymentUrl
+        responseData.message = 'Redirection vers la passerelle de paiement Maisha Pay...'
+
+        await pool.query(
+          'INSERT INTO notifications (message, lu) VALUES (:msg, 0)', 
+          { msg: `🌐 MAISHA PAY: Nouvelle tentative de paiement pour ${commande.reference} (${montant} USD).` }
+        )
+      } catch (paymentError) {
+        console.warn('[MAISHAPAY] Passage en mode dégradé:', paymentError?.message || paymentError)
+        responseData.status = 'success'
+        responseData.message = `Commande enregistrée: Maisha Pay est indisponible pour le moment. Réf: ${commande.reference}`
+        responseData.paymentUrl = null
+      }
     } else if (method === 'airtel') {
       if (!telephone) throw new Error("Le numéro de téléphone est requis pour Airtel Money")
       
