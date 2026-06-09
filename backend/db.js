@@ -258,6 +258,41 @@ async function ensureNotificationsTable() {
 
 await ensureNotificationsTable()
 
+function isMissingNotificationsTableError(error, sql) {
+  const message = String(error?.message || '').toLowerCase()
+  const statement = String(sql || '').toLowerCase()
+
+  return statement.includes('notifications')
+    && (message.includes("table 'miniprojet_ecommerce.notifications' doesn't exist")
+      || message.includes("table 'notifications' doesn't exist")
+      || String(error?.code || '').toUpperCase() === 'ER_NO_SUCH_TABLE')
+}
+
+function fallbackNotificationsResult(sql) {
+  const statement = String(sql || '').trim().toLowerCase()
+
+  if (statement.startsWith('select')) {
+    return [[], []]
+  }
+
+  return [{ affectedRows: 0, insertId: 0 }, undefined]
+}
+
+function wrapQueryWithNotificationsFallback(queryFn) {
+  return async function queryWithNotificationsFallback(sql, values, options = {}) {
+    try {
+      return await queryFn(sql, values, options)
+    } catch (error) {
+      if (isMissingNotificationsTableError(error, sql)) {
+        console.warn('[DATABASE] notifications table missing; ignoring non-blocking notification query.')
+        return fallbackNotificationsResult(sql)
+      }
+
+      throw error
+    }
+  }
+}
+
 const TRANSIENT_DB_ERRORS = new Set([
   'PROTOCOL_CONNECTION_LOST',
   'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
@@ -287,6 +322,11 @@ pool.query = async function queryWithRetry(sql, values, options = {}) {
     try {
       return await originalQuery(sql, values)
     } catch (error) {
+      if (isMissingNotificationsTableError(error, sql)) {
+        console.warn('[DATABASE] notifications table missing; returning empty result for notification query.')
+        return fallbackNotificationsResult(sql)
+      }
+
       lastError = error
       if (!isTransientDbError(error) || attempt >= maxRetries) {
         throw error
@@ -297,6 +337,43 @@ pool.query = async function queryWithRetry(sql, values, options = {}) {
       )
       await sleep(backoff)
     }
+
+  const originalGetConnection = pool.getConnection.bind(pool)
+  pool.getConnection = async function getConnectionWithFallback(...args) {
+    const connection = await originalGetConnection(...args)
+    const originalConnectionQuery = connection.query.bind(connection)
+
+    connection.query = wrapQueryWithNotificationsFallback(async (sql, values, options = {}) => {
+      const maxRetries = Number(options.maxRetries ?? process.env.DB_QUERY_RETRIES ?? 2)
+      const baseDelayMs = Number(options.baseDelayMs ?? process.env.DB_QUERY_RETRY_DELAY_MS ?? 400)
+
+      let lastError
+      for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        try {
+          return await originalConnectionQuery(sql, values)
+        } catch (error) {
+          if (isMissingNotificationsTableError(error, sql)) {
+            console.warn('[DATABASE] notifications table missing; returning empty result for transaction notification query.')
+            return fallbackNotificationsResult(sql)
+          }
+
+          lastError = error
+          if (!isTransientDbError(error) || attempt >= maxRetries) {
+            throw error
+          }
+          const backoff = baseDelayMs * (attempt + 1)
+          console.warn(
+            `[DATABASE] Connection query retry ${attempt + 1}/${maxRetries} after transient error (${error.code || 'UNKNOWN'}). Waiting ${backoff}ms.`,
+          )
+          await sleep(backoff)
+        }
+      }
+
+      throw lastError
+    })
+
+    return connection
+  }
   }
 
   throw lastError
