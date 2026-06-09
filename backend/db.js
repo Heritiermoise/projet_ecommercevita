@@ -241,6 +241,23 @@ async function removeLegacyPaymentTrigger() {
 
 await removeLegacyPaymentTrigger()
 
+async function ensureNotificationsTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INT NOT NULL AUTO_INCREMENT,
+      type VARCHAR(100) NULL,
+      message TEXT NOT NULL,
+      lu TINYINT(1) NOT NULL DEFAULT 0,
+      cree_le TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_notifications_lu (lu),
+      KEY idx_notifications_cree_le (cree_le)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `)
+}
+
+await ensureNotificationsTable()
+
 const TRANSIENT_DB_ERRORS = new Set([
   'PROTOCOL_CONNECTION_LOST',
   'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
