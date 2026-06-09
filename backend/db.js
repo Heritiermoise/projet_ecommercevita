@@ -109,6 +109,7 @@ const baseConfig = {
 }
 
 let pool
+let legacyTriggerCleanupPromise = null
 
 function isLocalHost(value) {
   const host = String(value || '').trim().toLowerCase()
@@ -220,6 +221,25 @@ async function createPool() {
 }
 
 pool = await createPool()
+
+async function removeLegacyPaymentTrigger() {
+  if (legacyTriggerCleanupPromise) {
+    return legacyTriggerCleanupPromise
+  }
+
+  legacyTriggerCleanupPromise = (async () => {
+    try {
+      await pool.query('DROP TRIGGER IF EXISTS trg_ai_commandes_nettoyage_panier')
+      console.log('[DATABASE] Legacy cart-cleanup trigger removed or already absent.')
+    } catch (error) {
+      console.warn('[DATABASE] Unable to remove legacy trigger trg_ai_commandes_nettoyage_panier:', error?.message || error)
+    }
+  })()
+
+  return legacyTriggerCleanupPromise
+}
+
+await removeLegacyPaymentTrigger()
 
 const TRANSIENT_DB_ERRORS = new Set([
   'PROTOCOL_CONNECTION_LOST',
